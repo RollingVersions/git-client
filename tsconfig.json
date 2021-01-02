@@ -1,0 +1,17 @@
+{
+  "extends": "@forbeslindesay/tsconfig",
+  "compilerOptions": {
+    "outDir": "lib",
+    "incremental": true,
+    "rootDir": "src",
+    "tsBuildInfoFile": "lib/.tsbuildinfo",
+    "lib": ["DOM", "ES2020"]
+  },
+  "files": [],
+  "references": [
+    {"path": "./packages/http"},
+    {"path": "./packages/objects"},
+    {"path": "./packages/protocol"},
+    {"path": "./packages/streams"},
+  ]
+}
