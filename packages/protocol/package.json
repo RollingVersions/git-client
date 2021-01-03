@@ -19,7 +19,9 @@
     "build": "tsc"
   },
   "dependencies": {
-    "@es-git/core": "^0.10.0"
+    "@es-git/core": "^0.10.0",
+    "@es-git/packfile": "^0.10.0",
+    "@rollingversions/git-streams": "^0.0.0"
   },
   "devDependencies": {},
   "peerDependencies": {},

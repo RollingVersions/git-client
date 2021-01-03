@@ -3,9 +3,9 @@ import {
   asyncIteratorToStream,
   streamToAsyncIterator,
 } from '@rollingversions/git-streams';
-import FetchInterface from './FetchInterface';
+import HttpInterface from './HttpInterface';
 
-const getDefaultFetch = (options: {[key: string]: any}): FetchInterface => ({
+const HttpDefault = (options: {[key: string]: any}): HttpInterface => ({
   createHeaders: () => new Headers(),
   get: async function* (url, headers) {
     const response = await fetch(url.href, {...options, headers});
@@ -52,4 +52,4 @@ const getDefaultFetch = (options: {[key: string]: any}): FetchInterface => ({
   },
 });
 
-export default getDefaultFetch;
+export default HttpDefault;

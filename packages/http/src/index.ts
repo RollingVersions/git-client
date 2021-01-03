@@ -1,14 +1,27 @@
-import getDefaultFetch from './getDefaultFetch';
-import FetchInterface from './FetchInterface';
+import HttpDefault from './HttpDefault';
 import initialRequest from './initialRequest';
 import lsRefs from './lsRefs';
+import fetchObjects from './fetchObjects';
 
-export type {FetchInterface};
+export type {
+  default as Context,
+  ContextWithServerCapabilities,
+} from './Context';
 
-export const Fetch = getDefaultFetch({});
+export type {default as HttpInterface} from './HttpInterface';
+
+export const Http = HttpDefault({});
 
 export {initialRequest};
 export {lsRefs};
+export {fetchObjects};
+
+export {
+  blobNone,
+  blobLimit,
+  treeDepth,
+  FetchResponseEntryKind,
+} from '@rollingversions/git-protocol';
 
 export async function collect<T>(
   iterator: AsyncIterableIterator<T>,

@@ -298,6 +298,14 @@
   resolved "https://registry.yarnpkg.com/@es-git/mix/-/mix-0.10.0.tgz#d260c0fcb1ad63abca28f9d82f8a49cce2898283"
   integrity sha512-306y/wg20d2V7i0k4HASvmn0W4O8JvI2X9Wx67VjEGs/xgFaeo7mnc3gG9GvXdLxv0QGQ1CYtveZF8QTYcS4jg==
 
+"@es-git/packfile@^0.10.0":
+  version "0.10.0"
+  resolved "https://registry.yarnpkg.com/@es-git/packfile/-/packfile-0.10.0.tgz#c5ac5673012ea810305581bf9f4648792c2356fa"
+  integrity sha512-Sk4irbhKP32K5QGN/cykpvisNCWpzHIU1sF+SKBitzfL6qmpSzuIfFbw/AXtjQkkocWcb5W7NWHi7LeKo2RVpw==
+  dependencies:
+    "@es-git/core" "^0.10.0"
+    pako "^1.0.5"
+
 "@forbeslindesay/tsconfig@^2.0.0":
   version "2.0.0"
   resolved "https://registry.yarnpkg.com/@forbeslindesay/tsconfig/-/tsconfig-2.0.0.tgz#71a8a92afb366ea7ca05fe46e68bc033060c2e2d"
@@ -3231,6 +3239,11 @@ p-try@^2.0.0:
   version "2.2.0"
   resolved "https://registry.yarnpkg.com/p-try/-/p-try-2.2.0.tgz#cb2868540e313d61de58fafbe35ce9004d5540e6"
   integrity sha512-R4nPAVTAU0B9D35/Gk3uJf/7XYbQcyohSKdvAxIRSNghFl4e71hVoGnBNQz9cWaXxO2I10KTC+3jMdvvoKw6dQ==
+
+pako@^1.0.5:
+  version "1.0.11"
+  resolved "https://registry.yarnpkg.com/pako/-/pako-1.0.11.tgz#6c9599d340d54dfd3946380252a35705a6b992bf"
+  integrity sha512-4hLB8Py4zZce5s4yd9XzopqwVv/yGNhV1Bl8NTmCq1763HeK2+EwVTv+leGeL13Dnh2wfbqowVPXCIO0z4taYw==
 
 parent-module@^1.0.0:
   version "1.0.1"

@@ -1,6 +1,6 @@
 import {collect} from '.';
 import lsRefs from './lsRefs';
-import ProxyFetch from './ProxyFetch';
+import HttpProxy from './HttpProxy';
 
 test('lsRefs', async () => {
   const refs = await collect(
@@ -14,7 +14,7 @@ test('lsRefs', async () => {
         refPrefix: ['refs/heads/', 'refs/tags/', 'HEAD'],
       },
       {
-        fetch: ProxyFetch,
+        http: HttpProxy,
         agent: 'rollingversions.com',
         serverCapabilities: new Map<string, string | boolean>([
           ['agent', 'git/github-gb13cc0c1a7bd'],

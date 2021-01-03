@@ -1,17 +1,33 @@
 import {
-  composeLsRefsCommand,
-  LsRefsCommand,
-  parseLsRefsResponse,
+  composeFetchCommand,
+  parseFetchResponse,
+  FetchCommand,
+  FetchResponseEntryError,
+  FetchResponseEntry,
+  FetchResponseEntryHeader,
+  FetchResponseEntryKind,
+  FetchResponseEntryObject,
+  FetchResponseEntryProgress,
 } from '@rollingversions/git-protocol';
 import {ContextWithServerCapabilities} from './Context';
 
 const defaultCapabilities: [string, string | boolean][] = [
   ['object-format', 'sha1'],
 ];
-export type {LsRefsCommand};
-export default async function* lsRefs(
+export type {
+  FetchCommand,
+  FetchResponseEntryError,
+  FetchResponseEntryHeader,
+  FetchResponseEntryProgress,
+  FetchResponseEntryObject,
+  FetchResponseEntry,
+};
+
+export {FetchResponseEntryKind};
+
+export default async function* fetchObjects(
   repoURL: URL,
-  command: LsRefsCommand,
+  command: FetchCommand,
   ctx: ContextWithServerCapabilities,
 ) {
   const url = new URL(
@@ -24,11 +40,11 @@ export default async function* lsRefs(
   headers.set('content-type', 'application/x-git-upload-pack-request');
   headers.set('git-protocol', 'version=2');
   headers.set('user-agent', ctx.agent);
-  yield* parseLsRefsResponse(
+  yield* parseFetchResponse(
     ctx.http.post(
       url,
       headers,
-      composeLsRefsCommand(
+      composeFetchCommand(
         command,
         new Map(
           [
