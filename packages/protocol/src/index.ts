@@ -12,6 +12,7 @@ import FetchCommand, {
 import {parseInitialResponse} from './InitialRequest';
 import LsRefsCommand, {
   composeLsRefsCommand,
+  LsRefsResponseEntry,
   parseLsRefsResponse,
 } from './LsRefsCommand';
 import ObjectFilter, {
@@ -22,7 +23,7 @@ import ObjectFilter, {
 } from './ObjectFilter';
 
 export type {Capabilities};
-export type {LsRefsCommand};
+export type {LsRefsCommand, LsRefsResponseEntry};
 export type {
   FetchCommand,
   FetchResponseEntryError,

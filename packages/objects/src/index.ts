@@ -1,7 +1,14 @@
 export {sha1, Type, Mode} from '@es-git/core';
 
 export {default as encodeObject, textToBlob} from './encodeObject';
-export {default as decodeObject, blobToText} from './decodeObject';
+export {
+  default as decodeObject,
+  blobToText,
+  objectIsBlob,
+  objectIsCommit,
+  objectIsTag,
+  objectIsTree,
+} from './decodeObject';
 
 export type {
   Hash,

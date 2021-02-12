@@ -1,9 +1,11 @@
-export default interface HttpInterface {
-  createHeaders(url: URL): Headers;
-  get(url: URL, headers: Headers): AsyncIterableIterator<Uint8Array>;
+export default interface HttpInterface<
+  THeaders extends {set(name: string, value: string): unknown}
+> {
+  createHeaders(url: URL): THeaders;
+  get(url: URL, headers: THeaders): AsyncIterableIterator<Uint8Array>;
   post(
     url: URL,
-    headers: Headers,
+    headers: THeaders,
     body: AsyncIterableIterator<Uint8Array>,
   ): AsyncIterableIterator<Uint8Array>;
 }

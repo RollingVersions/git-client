@@ -47,12 +47,7 @@ function toReader(
 
       return {
         done: false,
-        value: new Uint8Array(
-          value.buffer.slice(
-            value.byteOffset,
-            value.byteOffset + value.byteLength,
-          ),
-        ),
+        value,
       };
     },
     async cancel() {

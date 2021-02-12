@@ -3,7 +3,7 @@ import {Readable} from 'stream';
 export default function asyncIteratorToNodeStream(
   iterator: AsyncIterableIterator<Uint8Array>,
   {highWaterMarkBytes = 10 * 1024}: {highWaterMarkBytes?: number} = {},
-): ReadableStream<Uint8Array> | NodeJS.ReadableStream {
+): NodeJS.ReadableStream {
   return new Readable({
     highWaterMark: highWaterMarkBytes,
     async read() {

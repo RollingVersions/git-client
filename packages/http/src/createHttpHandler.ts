@@ -5,7 +5,9 @@ import {
 } from '@rollingversions/git-streams';
 import HttpInterface from './HttpInterface';
 
-const HttpDefault = (options: {[key: string]: any}): HttpInterface => ({
+const createHttpHandler = (options: {
+  [key: string]: any;
+}): HttpInterface<Headers> => ({
   createHeaders: () => new Headers(),
   get: async function* (url, headers) {
     const response = await fetch(url.href, {...options, headers});
@@ -52,4 +54,4 @@ const HttpDefault = (options: {[key: string]: any}): HttpInterface => ({
   },
 });
 
-export default HttpDefault;
+export default createHttpHandler;

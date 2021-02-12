@@ -1,7 +1,7 @@
 export default async function asyncIteratorToBuffer(
   iterator: AsyncIterableIterator<Uint8Array>,
-) {
-  const body = [];
+): Promise<Uint8Array> {
+  const body: Uint8Array[] = [];
   for await (const chunk of iterator) {
     body.push(chunk);
   }

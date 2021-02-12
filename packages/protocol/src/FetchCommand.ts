@@ -287,13 +287,12 @@ export const parseFetchResponse = packetLineParser(function parseLsRefsResponse(
             };
             break;
           case 2: {
-            const text = decode((await pkt.toBuffer()).slice(1)).trim();
+            const text = decode(await pkt.toBuffer(), 1).trim();
             yield {kind: FetchResponseEntryKind.Progress, text};
             break;
           }
           case 3: {
-            const text = decode((await pkt.toBuffer()).slice(1)).trim();
-            console.log(JSON.stringify(text));
+            const text = decode(await pkt.toBuffer(), 1).trim();
             yield {kind: FetchResponseEntryKind.Error, text};
             break;
           }

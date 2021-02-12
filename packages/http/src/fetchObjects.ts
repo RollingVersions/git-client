@@ -25,10 +25,12 @@ export type {
 
 export {FetchResponseEntryKind};
 
-export default async function* fetchObjects(
+export default async function* fetchObjects<
+  THeaders extends {set(name: string, value: string): unknown}
+>(
   repoURL: URL,
   command: FetchCommand,
-  ctx: ContextWithServerCapabilities,
+  ctx: ContextWithServerCapabilities<THeaders>,
 ) {
   const url = new URL(
     `${

@@ -1,6 +1,7 @@
 import {
   composeLsRefsCommand,
   LsRefsCommand,
+  LsRefsResponseEntry,
   parseLsRefsResponse,
 } from '@rollingversions/git-protocol';
 import {ContextWithServerCapabilities} from './Context';
@@ -8,12 +9,14 @@ import {ContextWithServerCapabilities} from './Context';
 const defaultCapabilities: [string, string | boolean][] = [
   ['object-format', 'sha1'],
 ];
-export type {LsRefsCommand};
-export default async function* lsRefs(
+export type {LsRefsCommand, LsRefsResponseEntry};
+export default async function* lsRefs<
+  THeaders extends {set(name: string, value: string): unknown}
+>(
   repoURL: URL,
   command: LsRefsCommand,
-  ctx: ContextWithServerCapabilities,
-) {
+  ctx: ContextWithServerCapabilities<THeaders>,
+): AsyncIterableIterator<LsRefsResponseEntry> {
   const url = new URL(
     `${
       repoURL.href.endsWith('.git') ? repoURL.href : `${repoURL.href}.git`

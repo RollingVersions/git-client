@@ -1,10 +1,10 @@
 import {treeDepth} from '@rollingversions/git-protocol';
-import {collect} from '.';
+import {asyncIteratorToArray} from '@rollingversions/git-streams';
 import fetchObjects, {FetchResponseEntryKind} from './fetchObjects';
 import HttpProxy from './HttpProxy';
 
 test('fetchObjects', async () => {
-  const results = await collect(
+  const results = await asyncIteratorToArray(
     fetchObjects(
       new URL(
         'https://github.com/RollingVersions/test-single-npm-package-github-actions.git',

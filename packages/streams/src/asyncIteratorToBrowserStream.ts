@@ -1,7 +1,7 @@
 export default function asyncIteratorToBrowserStream(
   iterator: AsyncIterableIterator<Uint8Array>,
   {highWaterMarkBytes = 10 * 1024}: {highWaterMarkBytes?: number} = {},
-): ReadableStream<Uint8Array> | NodeJS.ReadableStream {
+): ReadableStream<Uint8Array> {
   return new ReadableStream<Uint8Array>(
     {
       async start() {},

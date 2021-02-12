@@ -7,10 +7,9 @@ import Context from './Context';
 export interface InitialResponse {
   capabilities: Capabilities;
 }
-export default async function initialRequest(
-  repoURL: URL,
-  ctx: Context,
-): Promise<InitialResponse> {
+export default async function initialRequest<
+  THeaders extends {set(name: string, value: string): unknown}
+>(repoURL: URL, ctx: Context<THeaders>): Promise<InitialResponse> {
   const url = new URL(
     `${
       repoURL.href.endsWith('.git') ? repoURL.href : `${repoURL.href}.git`

@@ -1,4 +1,5 @@
-import HttpDefault from './HttpDefault';
+import {asyncIteratorToArray} from '@rollingversions/git-streams';
+import HttpDefault from './createHttpHandler';
 import initialRequest from './initialRequest';
 import lsRefs from './lsRefs';
 import fetchObjects from './fetchObjects';
@@ -10,11 +11,16 @@ export type {
 
 export type {default as HttpInterface} from './HttpInterface';
 
-export const Http = HttpDefault({});
+export const DEFAULT_HTTP_HANDLER = HttpDefault({});
 
-export {initialRequest};
-export {lsRefs};
-export {fetchObjects};
+export type {
+  FetchCommand,
+  FetchResponseEntry,
+  FetchResponseEntryHeader,
+  FetchResponseEntryProgress,
+  FetchResponseEntryError,
+  FetchResponseEntryObject,
+} from '@rollingversions/git-protocol';
 
 export {
   blobNone,
@@ -23,12 +29,8 @@ export {
   FetchResponseEntryKind,
 } from '@rollingversions/git-protocol';
 
-export async function collect<T>(
-  iterator: AsyncIterableIterator<T>,
-): Promise<T[]> {
-  const result: T[] = [];
-  for await (const value of iterator) {
-    result.push(value);
-  }
-  return result;
-}
+export {initialRequest};
+export {lsRefs};
+export {fetchObjects};
+
+export {asyncIteratorToArray};

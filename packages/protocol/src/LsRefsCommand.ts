@@ -44,6 +44,12 @@ export default interface LsRefsCommand {
    */
   refPrefix?: readonly string[];
 }
+export interface LsRefsResponseEntry {
+  objectID: string;
+  refName: string;
+  symrefTarget: string | null;
+  peeled: string[];
+}
 
 export const composeLsRefsCommand = packetLinePrinter(
   async function* composeLsRefsCommand(
@@ -67,7 +73,9 @@ export const composeLsRefsCommand = packetLinePrinter(
 );
 
 export const parseLsRefsResponse = packetLineParser(
-  async function* parseLsRefsResponse(response) {
+  async function* parseLsRefsResponse(
+    response,
+  ): AsyncIterableIterator<LsRefsResponseEntry> {
     for await (const pkt of response) {
       if (pkt === SpecialPacketLine.FlushPacket) {
         break;

@@ -12,9 +12,22 @@ export function* composeCapabilityList(
   capabilities: Capabilities,
 ): Generator<PacketLine> {
   for (const [key, value] of capabilities.entries()) {
+    if (!/^[a-z0-9\-\_]+$/i.test(key)) {
+      throw new Error(`Invalid capability key: "${key}"`);
+    }
+    if (value === false) {
+      continue;
+    }
     if (value === true) {
       yield `${key}\n`;
     } else {
+      if (
+        !/^[a-z0-9\ \-\_\.\,\?\\\/\{\}\[\]\(\)\<\>\!\@\#\$\%\^\&\*\+\=\:\;]+$/i.test(
+          key,
+        )
+      ) {
+        throw new Error(`Invalid capability value for "${key}": "${value}"`);
+      }
       yield `${key}=${value}\n`;
     }
   }

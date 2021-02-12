@@ -1,9 +1,9 @@
-import {collect} from '.';
+import {asyncIteratorToArray} from '@rollingversions/git-streams';
 import lsRefs from './lsRefs';
 import HttpProxy from './HttpProxy';
 
 test('lsRefs', async () => {
-  const refs = await collect(
+  const refs = await asyncIteratorToArray(
     lsRefs(
       new URL(
         'https://github.com/RollingVersions/test-single-npm-package-github-actions.git',
