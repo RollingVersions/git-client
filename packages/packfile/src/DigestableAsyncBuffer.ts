@@ -1,12 +1,13 @@
-import {AsyncBuffer, sha1, Sha1} from '@rollingversions/git-core';
+import {AsyncBuffer} from '@rollingversions/git-core';
+import {createHash, Hash} from 'crypto';
 
 export default class DigestableAsyncBuffer extends AsyncBuffer {
-  private sha: Sha1;
+  private sha: Hash;
   private temp: Uint8Array;
   private tempChunk: Uint8Array | undefined;
   constructor(chunks: AsyncIterableIterator<Uint8Array>) {
     super(chunks);
-    this.sha = sha1();
+    this.sha = createHash('sha1'); // sha1();
     this.temp = new Uint8Array(1);
   }
 
@@ -20,7 +21,8 @@ export default class DigestableAsyncBuffer extends AsyncBuffer {
       return result;
     } else {
       const result = await super.next(length);
-      return this.sha.update(result);
+      this.sha.update(result);
+      return result;
     }
   }
 
@@ -50,8 +52,8 @@ export default class DigestableAsyncBuffer extends AsyncBuffer {
   }
 
   digest() {
-    const result = this.sha.digest();
-    this.sha = sha1();
+    const result = this.sha.digest('hex');
+    this.sha = createHash('sha1');
     return result;
   }
 }

@@ -21,7 +21,9 @@
   "dependencies": {
     "@rollingversions/git-core": "^0.0.0"
   },
-  "devDependencies": {},
+  "devDependencies": {
+    "@types/node": "*"
+  },
   "peerDependencies": {},
   "engines": {
     "node": ">=14.0.0"

@@ -1,4 +1,5 @@
-import {packHash, sha1} from '@rollingversions/git-core';
+import {packHash} from '@rollingversions/git-core';
+import {createHash} from 'crypto';
 
 import * as pako from 'pako';
 
@@ -8,17 +9,20 @@ export default async function* composePackfile(
   items: AsyncIterableIterator<Entry>,
   count: number,
 ) {
-  const hash = sha1();
+  const hash = createHash('sha1');
 
-  yield hash.update(packHeader(count));
+  const head = packHeader(count);
+  hash.update(head);
+  yield head;
 
   for await (const item of items) {
     for (const chunk of packFrame(item)) {
-      yield hash.update(chunk);
+      hash.update(chunk);
+      yield chunk;
     }
   }
 
-  yield packHash(hash.digest());
+  yield packHash(hash.digest('hex'));
 }
 
 function packHeader(length: number) {

@@ -23,7 +23,9 @@
     "@types/pako": "^1.0.2",
     "pako": "^1.0.5"
   },
-  "devDependencies": {},
+  "devDependencies": {
+    "@types/node": "*"
+  },
   "peerDependencies": {},
   "engines": {
     "node": ">=14.0.0"

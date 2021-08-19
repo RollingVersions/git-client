@@ -1,4 +1,4 @@
-import {concat, encode, sha1} from '@rollingversions/git-core';
+import {concat, encode} from '@rollingversions/git-core';
 
 import {
   Type,
@@ -10,6 +10,7 @@ import {
   Progress,
 } from './types';
 import applyDelta from './apply-delta';
+import {createHash} from 'crypto';
 
 export default async function* normalizeEntries(
   entries: AsyncIterableIterator<Entry>,
@@ -33,7 +34,7 @@ export default async function* normalizeEntries(
 
     const type = Type[entry.type];
     const body = encodeRaw(type, entry.body);
-    const hash = sha1(body);
+    const hash = createHash('sha1').update(body).digest('hex');
 
     references.set(hash, entry);
     offsets.set(entry.offset, entry);

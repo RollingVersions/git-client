@@ -1,9 +1,12 @@
-import {sha1, encodeObject, decodeObject, GitObject, Type, Mode} from '.';
+import {createHash} from 'crypto';
+import {encodeObject, decodeObject, GitObject, Type, Mode} from '.';
 
 function testEncoding(inputObject: GitObject, expectedHash: string) {
   return () => {
     const objectBuffer = encodeObject(inputObject);
-    expect(sha1(objectBuffer)).toBe(expectedHash);
+    expect(createHash('sha1').update(objectBuffer).digest('hex')).toBe(
+      expectedHash,
+    );
     expect(decodeObject(objectBuffer)).toEqual(inputObject);
   };
 }
