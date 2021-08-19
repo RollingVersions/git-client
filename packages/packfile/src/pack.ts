@@ -4,7 +4,7 @@ import composePackfile from './compose-packfile';
 import {Type, NormalEntry, RawObject} from './types';
 import pipe from './pipe';
 
-export type HashBlob = [string, Uint8Array];
+export type HashBlob = readonly [string, Uint8Array];
 
 export default async function* pack(
   objects: AsyncIterableIterator<HashBlob>,
