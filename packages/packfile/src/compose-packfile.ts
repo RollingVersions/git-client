@@ -1,4 +1,3 @@
-import {packHash} from '@rollingversions/git-core';
 import {createHash} from 'crypto';
 
 import * as pako from 'pako';
@@ -22,7 +21,7 @@ export default async function* composePackfile(
     }
   }
 
-  yield packHash(hash.digest('hex'));
+  yield hash.digest();
 }
 
 function packHeader(length: number) {
@@ -48,7 +47,7 @@ function* packFrame(item: Entry) {
   if (item.type === Type.ofsDelta) {
     yield packOfsDelta(item.ref);
   } else if (item.type === Type.refDelta) {
-    yield packHash(item.ref);
+    yield Buffer.from(item.ref, 'hex');
   }
 
   yield pako.deflate(item.body);

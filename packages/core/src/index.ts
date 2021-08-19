@@ -9,8 +9,6 @@ export {
   fromOct,
   fromDecChar,
   fromHexChar,
-  packHash,
-  unpackHash,
   toHexChar,
   NEWLINE,
 } from './utils';

@@ -1,5 +1,5 @@
 import * as pako from 'pako';
-import {AsyncBuffer, unpackHash} from '@rollingversions/git-core';
+import {AsyncBuffer} from '@rollingversions/git-core';
 import DigestableAsyncBuffer from './DigestableAsyncBuffer';
 
 import {Type, Entry, Progress} from './types';
@@ -204,7 +204,7 @@ async function $refDelta(state: DeltaHeaderState): Promise<State> {
     ...state,
     state: 'ref-delta',
     type: Type.refDelta,
-    ref: unpackHash(await state.buffer.next(20)),
+    ref: Buffer.from(await state.buffer.next(20)).toString('hex'),
   };
 }
 
@@ -235,7 +235,7 @@ async function $body(
 // 20 byte checksum
 async function $checksum(state: EntriesState): Promise<State> {
   const actual = state.buffer.digest();
-  const checksum = unpackHash(await state.buffer.next(20));
+  const checksum = Buffer.from(await state.buffer.next(20)).toString('hex');
   if (checksum !== actual)
     throw new Error(
       `Checksum mismatch: actual ${actual} != expected ${checksum}`,

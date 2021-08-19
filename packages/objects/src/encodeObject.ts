@@ -1,4 +1,4 @@
-import {concat, encode, Mode, packHash, Type} from '@rollingversions/git-core';
+import {concat, encode, Mode, Type} from '@rollingversions/git-core';
 import {
   CommitBody,
   GitObject,
@@ -56,7 +56,7 @@ export function encodeTree(body: TreeBody) {
       .sort(treeSort)
       .flatMap((entry) => [
         encode(`${entry.mode.toString(8)} ${entry.name}\0`),
-        packHash(entry.hash),
+        Buffer.from(entry.hash, `hex`),
       ]),
   );
 }

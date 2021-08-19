@@ -62,27 +62,6 @@ export function fromOct(
   return val;
 }
 
-export function packHash(hex: string) {
-  var raw = new Uint8Array(hex.length / 2);
-  for (let i = 0; i < hex.length; ) {
-    raw[i / 2] =
-      (fromHexChar(hex.charCodeAt(i++)) << 4) |
-      fromHexChar(hex.charCodeAt(i++));
-  }
-  return raw;
-}
-
-export function unpackHash(binary: Uint8Array, start = 0, end = binary.length) {
-  var hex = '';
-  for (var i = start; i < end; i++) {
-    var byte = binary[i];
-    hex +=
-      String.fromCharCode(toHexChar(byte >> 4)) +
-      String.fromCharCode(toHexChar(byte & 0xf));
-  }
-  return hex;
-}
-
 export function toHexChar(val: number) {
   return val < 10 ? val + 0x30 : val + 0x57;
 }

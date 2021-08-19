@@ -1,10 +1,4 @@
-import {
-  Type,
-  decode,
-  unpackHash,
-  fromDec,
-  fromOct,
-} from '@rollingversions/git-core';
+import {Type, decode, fromDec, fromOct} from '@rollingversions/git-core';
 
 import {
   GitObject,
@@ -109,7 +103,8 @@ function decodeTree(body: Uint8Array): TreeObject {
     start = i;
     i = body.indexOf(0x00, start);
     name = decode(body, start, i++);
-    hash = unpackHash(body, i, (i += 20));
+
+    hash = Buffer.from(body.slice(i, (i += 20))).toString('hex');
     tree[name] = {
       mode: mode,
       hash: hash,
