@@ -1,4 +1,4 @@
-import {concat, encode, flatten, Mode, packHash, Type} from '@es-git/core';
+import {concat, encode, Mode, packHash, Type} from '@rollingversions/git-core';
 import {
   CommitBody,
   GitObject,
@@ -48,18 +48,16 @@ export function treeSort(
 
 export function encodeTree(body: TreeBody) {
   return concat(
-    ...flatten(
-      Object.keys(body)
-        .map((key) => ({
-          name: key,
-          ...body[key],
-        }))
-        .sort(treeSort)
-        .map((entry) => [
-          encode(`${entry.mode.toString(8)} ${entry.name}\0`),
-          packHash(entry.hash),
-        ]),
-    ),
+    ...Object.keys(body)
+      .map((key) => ({
+        name: key,
+        ...body[key],
+      }))
+      .sort(treeSort)
+      .flatMap((entry) => [
+        encode(`${entry.mode.toString(8)} ${entry.name}\0`),
+        packHash(entry.hash),
+      ]),
   );
 }
 

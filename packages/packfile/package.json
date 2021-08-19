@@ -1,5 +1,5 @@
 {
-  "name": "@rollingversions/git-objects",
+  "name": "@rollingversions/git-packfile",
   "version": "0.0.0",
   "main": "dist/index.cjs",
   "module": "dist/index.mjs",
@@ -19,7 +19,9 @@
     "build": "tsc"
   },
   "dependencies": {
-    "@rollingversions/git-core": "^0.0.0"
+    "@rollingversions/git-core": "^0.0.0",
+    "@types/pako": "^1.0.2",
+    "pako": "^1.0.5"
   },
   "devDependencies": {},
   "peerDependencies": {},

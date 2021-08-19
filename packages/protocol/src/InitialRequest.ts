@@ -8,6 +8,7 @@ export const parseInitialResponse = packetLineParser(
     let gotVersion = false;
     let gotVersionAtLeastOnce = false;
     for await (const packet of packets) {
+      console.log('packet =', packet);
       if (packet === SpecialPacketLine.FlushPacket) {
         isStart = true;
         gotVersion = false;

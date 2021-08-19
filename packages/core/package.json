@@ -1,5 +1,5 @@
 {
-  "name": "@rollingversions/git-objects",
+  "name": "@rollingversions/git-core",
   "version": "0.0.0",
   "main": "dist/index.cjs",
   "module": "dist/index.mjs",
@@ -18,9 +18,7 @@
   "scripts": {
     "build": "tsc"
   },
-  "dependencies": {
-    "@rollingversions/git-core": "^0.0.0"
-  },
+  "dependencies": {},
   "devDependencies": {},
   "peerDependencies": {},
   "engines": {

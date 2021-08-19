@@ -1,4 +1,10 @@
-import {Type, decode, unpackHash, fromDec, fromOct} from '@es-git/core';
+import {
+  Type,
+  decode,
+  unpackHash,
+  fromDec,
+  fromOct,
+} from '@rollingversions/git-core';
 
 import {
   GitObject,

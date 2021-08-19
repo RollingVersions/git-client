@@ -6,7 +6,7 @@ import {
   concat,
   encode,
   decode,
-} from '@es-git/core';
+} from '@rollingversions/git-core';
 
 export enum SpecialPacketLine {
   /**

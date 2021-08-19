@@ -94,3 +94,5 @@ app/tailwind.css.br
 
 bundle-cache
 package-entry-points.json
+
+secrets/

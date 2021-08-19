@@ -1,5 +1,5 @@
-import {AsyncBuffer, decode, Type} from '@es-git/core';
-import {unpack} from '@es-git/packfile';
+import {AsyncBuffer, decode, Type} from '@rollingversions/git-core';
+import {unpack} from '@rollingversions/git-packfile';
 import {
   mergeAsyncIterator,
   splitAsyncIterator,

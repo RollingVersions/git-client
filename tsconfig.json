@@ -9,8 +9,10 @@
   },
   "files": [],
   "references": [
+    {"path": "./packages/core"},
     {"path": "./packages/http"},
     {"path": "./packages/objects"},
+    {"path": "./packages/packfile"},
     {"path": "./packages/protocol"},
     {"path": "./packages/streams"},
   ]

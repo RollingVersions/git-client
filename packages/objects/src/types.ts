@@ -1,4 +1,4 @@
-import {Type, Mode} from '@es-git/core';
+import {Type, Mode} from '@rollingversions/git-core';
 
 export type Hash = string;
 

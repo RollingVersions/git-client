@@ -1,4 +1,4 @@
-import {decode, encode} from '@es-git/core';
+import {decode, encode} from '@rollingversions/git-core';
 import {
   printPktLine,
   parsePktLines,

@@ -1,4 +1,4 @@
-import {encode, NEWLINE} from '@es-git/core';
+import {encode, NEWLINE} from '@rollingversions/git-core';
 
 const NEWLINE_ARRAY = [NEWLINE];
 export default function joinWithNewline(...values: (string | Uint8Array)[]) {
