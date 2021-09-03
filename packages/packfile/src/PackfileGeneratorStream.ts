@@ -4,11 +4,12 @@ import {createDeflate} from 'zlib';
 import {GitRawObject, GitObjectTypeID} from './types';
 
 export default class PackfileGeneratorStream extends Transform {
-  constructor({length}: {length: number}) {
+  constructor({entryCount}: {entryCount: number}) {
     const hash = createHash('sha1');
     let writtenHead = false;
     const writeHead = () => {
       if (writtenHead) return;
+      writtenHead = true
       const head = Buffer.from([
         0x50,
         0x41,
@@ -18,10 +19,10 @@ export default class PackfileGeneratorStream extends Transform {
         0,
         0,
         2, // version 2
-        length >> 24, // Num of objects
-        (length >> 16) & 0xff,
-        (length >> 8) & 0xff,
-        length & 0xff,
+        entryCount >> 24, // Num of objects
+        (entryCount >> 16) & 0xff,
+        (entryCount >> 8) & 0xff,
+        entryCount & 0xff,
       ]);
       hash.update(head);
       this.push(head);
@@ -32,17 +33,28 @@ export default class PackfileGeneratorStream extends Transform {
         writeHead();
         const type = GitObjectTypeID[chunk.type];
         // TODO: support packing deltas
-        this.push(packFrameHeader(type, chunk.body.length));
+
+        const space = chunk.body.indexOf(0x20);
+        if (space < 0) throw new Error('Invalid git object buffer');
+        const nil = chunk.body.indexOf(0x00, space);
+        if (nil < 0) throw new Error('Invalid git object buffer');
+        const body = chunk.body.subarray(nil + 1);
+
+        const frameHeader = packFrameHeader(type, body.length)
+        hash.update(frameHeader)
+        this.push(frameHeader);
+
         const deflateStream = createDeflate();
         deflateStream
           .on('data', (chunk) => {
+            hash.update(chunk)
             this.push(chunk);
           })
           .on('error', (err) => callback(err))
           .on('end', () => {
             callback();
           })
-          .end(chunk.body);
+          .end(body);
       },
       flush(callback) {
         writeHead();
