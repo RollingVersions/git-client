@@ -1,69 +1,43 @@
+import {concat, encode} from '@rollingversions/git-core';
 import {createHash, Hash} from 'crypto';
 import {Transform} from 'stream';
 import {createInflate} from 'zlib';
-import {Type, Entry} from './types';
-
-// interface BaseState {
-//   /**
-//    *
-//    */
-//   readonly buffer: Buffer;
-//   /**
-//    * Byte offset from start of stream
-//    */
-//   readonly offset: number;
-//   /**
-//    * Git protocol version
-//    */
-//   readonly version: 2 | 3;
-
-//   readonly entriesCount: number;
-//   readonly entryIndex: number;
-// }
-// interface StateStart extends Pick<BaseState, 'buffer' | 'offset'> {
-//   readonly type: 'start';
-// }
-// interface StateParsingVersion extends Pick<BaseState, 'buffer' | 'offset'> {
-//   readonly type: 'parsing-version';
-// }
-// interface StateParsingEntriesCount
-//   extends Pick<BaseState, 'buffer' | 'offset' | 'version'> {
-//   readonly type: 'parsing-entries-count';
-// }
-// interface StateParsingHeader
-//   extends Pick<
-//     BaseState,
-//     'buffer' | 'offset' | 'version' | 'entriesCount' | 'entryIndex'
-//   > {
-//   readonly type: 'parsing-header';
-// }
-
-// type State =
-//   | StateStart
-//   | StateParsingVersion
-//   | StateParsingEntriesCount
-//   | StateParsingHeader;
+import applyDelta from './apply-delta';
+import {PackfileEntry, GitObjectTypeID} from './types';
 
 type State = (chunk: Buffer | null) => Promise<State>;
 
 interface BaseContext {
-  digest: Hash;
-  onEntry: (entry: Entry) => void;
+  readonly digest: Hash;
+  readonly references: Store<string, PackfileEntry>;
+  readonly offsets: Store<number, PackfileEntry>;
+  readonly onEntry: (entry: PackfileEntry) => void;
 }
 interface HeaderContext extends BaseContext {
-  version: 2 | 3;
-  entriesCount: number;
-  entryIndex: number;
-  offset: number;
+  readonly version: 2 | 3;
+  readonly entriesCount: number;
+  readonly entryIndex: number;
+  readonly offset: number;
 }
 
 interface BodyContext extends HeaderContext {
-  entryOffset: number;
-  size: number;
+  readonly entryOffset: number;
+  readonly size: number;
 }
 
-export class PackfileParserStream extends Transform {
-  constructor() {
+export interface Store<TKey, TValue> {
+  get(key: TKey): TValue | undefined | Promise<TValue | undefined>;
+  set(key: TKey, value: TValue): unknown;
+}
+export interface Stores {
+  // Ideally you would provide a store that supports thinpack lookup
+  // in addition to refs added via `.set`
+  readonly references?: Store<string, PackfileEntry>;
+  readonly offsets?: Store<number, PackfileEntry>;
+}
+
+export default class PackfileParserStream extends Transform {
+  constructor({references = new Map(), offsets = new Map()}: Stores = {}) {
     let state: Promise<State> | undefined;
     super({
       readableObjectMode: true,
@@ -71,9 +45,22 @@ export class PackfileParserStream extends Transform {
         state = state
           ? state.then((s) => s(chunk))
           : parseStart(chunk, {
+              references,
+              offsets,
               digest: createHash('sha1'),
               onEntry: (entry) => {
-                this.push(entry);
+                const type = GitObjectTypeID[entry.type];
+                const body = encodeRaw(type, entry.body);
+                const hash = createHash('sha1').update(body).digest('hex');
+
+                references.set(hash, entry);
+                offsets.set(entry.offset, entry);
+
+                this.push({
+                  hash,
+                  type,
+                  body,
+                });
               },
             });
         state.then(
@@ -100,13 +87,13 @@ export class PackfileParserStream extends Transform {
     });
   }
 }
+
 // The first four bytes in a packfile are the bytes 'PACK'
 
 // The version is stored as an unsigned 32 integer in network byte order.
 // It must be version 2 or 3.
 
 // The number of objects in this packfile is also stored as an unsigned 32 bit int.
-
 const HEADER_LENGTH = 4 * 3;
 async function parseStart(chunk: Buffer, ctx: BaseContext): Promise<State> {
   if (chunk.length < HEADER_LENGTH) {
@@ -118,12 +105,14 @@ async function parseStart(chunk: Buffer, ctx: BaseContext): Promise<State> {
 
   const packfileHeader = chunk.readUInt32BE(0);
   if (packfileHeader !== 0x5041434b) {
-    throw new Error('Invalid packfile header');
+    throw new Error(
+      'Invalid packfile header, packfiles should start with "PACK"',
+    );
   }
 
   const version = chunk.readUInt32BE(4);
   if (version !== 2 && version !== 3) {
-    throw new Error('Invalid version number ' + version);
+    throw new Error('Invalid version number ' + version + ', expected 2 or 3');
   }
 
   const entriesCount = chunk.readUInt32BE(8);
@@ -207,7 +196,7 @@ async function parseHeader(chunk: Buffer, ctx: HeaderContext): Promise<State> {
             offset,
             size,
           },
-          (body) => {
+          async (body) => {
             ctx.onEntry({type, body, offset: entryOffset});
           },
         );
@@ -254,10 +243,16 @@ async function ofsDelta(chunk: Buffer, ctx: BodyContext): Promise<State> {
         ...ctx,
         offset,
       },
-      (body) => {
+      async (deltaBody) => {
+        const base = await ctx.offsets.get(ctx.entryOffset - ref);
+        if (!base) {
+          throw new Error(
+            `Cannot find base of ofs-delta ${ctx.entryOffset} - ${ref}`,
+          );
+        }
+        const body = applyDelta(deltaBody, base.body);
         ctx.onEntry({
-          type: Type.ofsDelta,
-          ref,
+          type: base.type,
           body,
           offset: ctx.entryOffset,
         });
@@ -282,10 +277,16 @@ async function refDelta(chunk: Buffer, ctx: BodyContext): Promise<State> {
       ...ctx,
       offset: ctx.offset + 20,
     },
-    (body) => {
+    async (deltaBody) => {
+      const base = await ctx.references.get(ref);
+      if (!base) {
+        throw new Error(
+          `Cannot find base of ref-delta ${ctx.entryOffset}: ${ref}`,
+        );
+      }
+      const body = applyDelta(deltaBody, base.body);
       ctx.onEntry({
-        type: Type.refDelta,
-        ref,
+        type: base.type,
         body,
         offset: ctx.entryOffset,
       });
@@ -297,7 +298,7 @@ async function refDelta(chunk: Buffer, ctx: BodyContext): Promise<State> {
 async function parseBody(
   chunk: Buffer,
   ctx: BodyContext,
-  onBody: (body: Buffer) => void,
+  onBody: (body: Buffer, compressedBody: Buffer) => Promise<void>,
 ): Promise<State> {
   let inflateEnded = false;
   const inflate = createInflate();
@@ -319,17 +320,23 @@ async function parseBody(
           `Length mismatch, expected ${ctx.size} got ${outputBuffer.length}`,
         );
       }
-      onBody(outputBuffer);
-
       const inputBuffer = Buffer.concat(inputBuffers);
-      ctx.digest.update(inputBuffer.slice(0, inflate.bytesWritten));
-      const remaining = inputBuffer.slice(inflate.bytesWritten);
-      resolve(
-        parseHeader(remaining, {
-          ...ctx,
-          entryIndex: ctx.entryIndex + 1,
-          offset: ctx.offset + inflate.bytesWritten,
-        }),
+
+      onBody(outputBuffer, inputBuffer).then(
+        () => {
+          ctx.digest.update(inputBuffer.slice(0, inflate.bytesWritten));
+          const remaining = inputBuffer.slice(inflate.bytesWritten);
+          resolve(
+            parseHeader(remaining, {
+              ...ctx,
+              entryIndex: ctx.entryIndex + 1,
+              offset: ctx.offset + inflate.bytesWritten,
+            }),
+          );
+        },
+        (err) => {
+          reject(err);
+        },
       );
     });
   });
@@ -343,43 +350,8 @@ async function parseBody(
     }
     inputBuffers.push(chunk);
     inflate.write(chunk);
-    // if (!inflate.write(chunk)) {
-    //   await new Promise<void>((resolve, reject) => {
-    //     function onResume() {
-    //       inflate.off(`resume`, onResume);
-    //       inflate.off(`error`, onError);
-    //       resolve();
-    //     }
-    //     function onError(err: Error) {
-    //       inflate.off(`resume`, onResume);
-    //       inflate.off(`error`, onError);
-    //       reject(err);
-    //     }
-    //     inflate.on(`resume`, onResume);
-    //     inflate.on(`error`, onError);
-    //   });
-    // }
     return writeChunk;
   }
-
-  // const inf = new pako.Inflate();
-  // do {
-  //   inf.push(await state.buffer.chunk());
-  // } while (inf.err === 0 && inf.result === undefined);
-  // state.buffer.rewind((inf as any).strm.avail_in);
-  // if (inf.err != 0) throw new Error(`Inflate error ${inf.err} ${inf.msg}`);
-  // const data = inf.result as Uint8Array;
-  // if (data.length !== state.size)
-  //   throw new Error(
-  //     `Length mismatch, expected ${state.size} got ${data.length}`,
-  //   );
-
-  // return {
-  //   ...state,
-  //   state: 'entry',
-  //   entry: entry(state, data),
-  //   entryIndex: state.entryIndex + 1,
-  // };
 }
 
 // 20 byte checksum
@@ -403,23 +375,6 @@ async function parseChecksum(
   }
 }
 
-// async function consume(
-//   chunk: Buffer | null,
-//   bytes: number,
-//   handler: (buffer: Buffer, rest: Buffer) => Promise<State>,
-// ): Promise<State> {
-//   if (!chunk) {
-//     throw new Error(`Unexpected end of input stream`);
-//   }
-//   if (chunk.length < bytes) {
-//     return await waitForMore(
-//       chunk,
-//       async (chunk) => await consume(chunk, bytes, handler),
-//     );
-//   }
-//   return await handler(chunk.slice(0, bytes), chunk.slice(bytes));
-// }
-
 function waitForMore(
   buffer: Buffer,
   handler: (buffer: Buffer) => Promise<State>,
@@ -430,4 +385,8 @@ function waitForMore(
     }
     return await handler(Buffer.concat([buffer, chunk]));
   };
+}
+
+function encodeRaw(type: string, bytes: Uint8Array) {
+  return concat(encode(`${type} ${bytes.length}\0`), bytes);
 }

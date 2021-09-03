@@ -1,5 +1,6 @@
-export {RawObject, Progress} from './types';
+export type {GitRawObject, PackfileEntry} from './types';
+export {GitObjectType} from './types';
 
-export {default as unpack} from './unpack';
-
-export {default as pack, HashBlob} from './pack';
+export {default as PackfileGeneratorStream} from './PackfileGeneratorStream';
+export {default as PackfileParserStream} from './PackfileParserStream';
+export type { Store, Stores} from './PackfileParserStream';

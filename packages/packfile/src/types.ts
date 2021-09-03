@@ -1,36 +1,26 @@
-export enum Type {
+export enum GitObjectTypeID {
   commit = 1,
   tree = 2,
   blob = 3,
   tag = 4,
-  ofsDelta = 6,
-  refDelta = 7,
+  // ofsDelta = 6,
+  // refDelta = 7,
+}
+export enum GitObjectType {
+  commit = 'commit',
+  tree = 'tree',
+  blob = 'blob',
+  tag = 'tag',
 }
 
-export interface AbstractEntry {
+export interface PackfileEntry {
+  readonly type: GitObjectTypeID;
   readonly offset: number;
   readonly body: Uint8Array;
 }
 
-export interface NormalEntry extends AbstractEntry {
-  readonly type: Type.blob | Type.commit | Type.tag | Type.tree;
-}
-export interface RefDeltaEntry extends AbstractEntry {
-  readonly type: Type.refDelta;
-  readonly ref: string;
-}
-
-export interface OfsDeltaEntry extends AbstractEntry {
-  readonly type: Type.ofsDelta;
-  readonly ref: number;
-}
-
-export type Entry = NormalEntry | RefDeltaEntry | OfsDeltaEntry;
-
-export interface RawObject {
-  readonly type: string;
+export interface GitRawObject {
+  readonly type: GitObjectType;
   readonly hash: string;
-  readonly body: Uint8Array;
+  readonly body: Buffer;
 }
-
-export type Progress = (message: string) => void;
