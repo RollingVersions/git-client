@@ -5,6 +5,7 @@ import {
 import Context from './Context';
 
 export interface InitialResponse {
+  url: URL;
   capabilities: Capabilities;
 }
 export default async function initialRequest<
@@ -38,5 +39,8 @@ export default async function initialRequest<
   console.log('response.url =', response.url.href);
 
   const capabilities = await parseInitialResponse(response.body);
-  return {capabilities};
+  return {
+    url: new URL(response.url.href.split(`.git`)[0] + `.git`),
+    capabilities,
+  };
 }

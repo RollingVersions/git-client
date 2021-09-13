@@ -1,4 +1,3 @@
-export {default as Buffer} from './Buffer';
 export {
   decode,
   encode,
@@ -48,18 +47,6 @@ export function toType(mode: number) {
   if (mode === Mode.tree) return Type.tree;
   if ((mode & Mask.blob) === Mask.mask) return Type.blob;
   return Type.unknown;
-}
-
-export interface IRawRepo {
-  listRefs(): Promise<Hash[]>;
-  getRef(ref: string): Promise<Hash | undefined>;
-  setRef(ref: string, hash: Hash): Promise<void>;
-  deleteRef(ref: string): Promise<void>;
-  saveRaw(hash: Hash, object: Uint8Array): Promise<void>;
-  loadRaw(hash: Hash): Promise<Uint8Array | undefined>;
-  hasObject(hash: Hash): Promise<boolean>;
-  saveMetadata(name: string, value: Uint8Array): Promise<void>;
-  loadMetadata(name: string): Promise<Uint8Array | undefined>;
 }
 
 export type Hash = string;

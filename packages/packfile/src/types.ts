@@ -16,7 +16,7 @@ export enum GitObjectType {
 export interface PackfileEntry {
   readonly type: GitObjectTypeID;
   readonly offset: number;
-  readonly body: Uint8Array;
+  readonly body: Buffer;
 }
 
 export interface GitRawObject {
