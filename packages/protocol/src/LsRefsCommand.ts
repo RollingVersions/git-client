@@ -1,8 +1,9 @@
+import {Transform} from 'stream';
 import Capabilities, {composeCapabilityList} from './CapabilityList';
 import {
   isSpecialPacket,
-  packetLineParser,
-  packetLinePrinter,
+  PacketLineGenerator,
+  PacketLineParser,
   SpecialPacketLine,
 } from './PktLines';
 
@@ -51,58 +52,81 @@ export interface LsRefsResponseEntry {
   peeled: string[];
 }
 
-export const composeLsRefsCommand = packetLinePrinter(
-  async function* composeLsRefsCommand(
-    command: LsRefsCommand,
-    capabilities: Capabilities,
-  ) {
-    yield `command=ls-refs\n`;
-    yield* composeCapabilityList(capabilities);
-    yield SpecialPacketLine.DelimiterPacket;
-    if (command.symrefs) {
-      yield `symrefs\n`;
-    }
-    if (command.peel) {
-      yield `peel\n`;
-    }
-    for (const prefix of command.refPrefix ?? []) {
-      yield `ref-prefix ${prefix}\n`;
-    }
-    yield SpecialPacketLine.FlushPacket;
-  },
-);
+export function composeLsRefsCommand(
+  command: LsRefsCommand,
+  capabilities: Capabilities,
+): NodeJS.ReadableStream {
+  const output = new PacketLineGenerator();
+  output.write(`command=ls-refs\n`);
+  for (const line of composeCapabilityList(capabilities)) {
+    output.write(line);
+  }
+  output.write(SpecialPacketLine.DelimiterPacket);
+  if (command.symrefs) {
+    output.write(`symrefs\n`);
+  }
+  if (command.peel) {
+    output.write(`peel\n`);
+  }
+  for (const prefix of command.refPrefix ?? []) {
+    output.write(`ref-prefix ${prefix}\n`);
+  }
+  output.write(SpecialPacketLine.FlushPacket);
+  output.end();
+  return output;
+}
 
-export const parseLsRefsResponse = packetLineParser(
-  async function* parseLsRefsResponse(
-    response,
-  ): AsyncIterableIterator<LsRefsResponseEntry> {
-    for await (const pkt of response) {
-      if (pkt === SpecialPacketLine.FlushPacket) {
-        break;
-      }
-      if (isSpecialPacket(pkt)) {
-        throw new Error(`Unexpected packet: "${pkt}"`);
-      }
-      const lineStr = await pkt.toString();
-      const line = lineStr.split(' ');
-      if (line.length < 2) {
-        throw new Error(`Invalid line: "${line.join(` `)}"`);
-      }
-      const [objectID, refName, ...refAttributes] = line;
-      const symrefTarget =
-        refAttributes
-          .filter((a) => a.startsWith('symref-target:'))
-          .map((a) => a.substr('symref-target:'.length))
-          .find(() => true) ?? null;
-      const peeled = refAttributes
-        .filter((a) => a.startsWith('peeled:'))
-        .map((a) => a.substr('peeled:'.length));
-      yield {
-        objectID,
-        refName,
-        symrefTarget,
-        peeled,
-      };
-    }
-  },
-);
+export class LsRefsResponseParser extends Transform {
+  constructor() {
+    super({
+      writableObjectMode: true,
+      readableObjectMode: true,
+      transform(pkt: SpecialPacketLine | Buffer, _encoding, cb) {
+        if (pkt === SpecialPacketLine.FlushPacket) {
+          return cb();
+        }
+        if (isSpecialPacket(pkt)) {
+          return cb(new Error(`Unexpected packet: "${pkt}"`));
+        }
+        const lineStr = pkt.toString(`utf8`).replace(/\n$/, ``);
+        const line = lineStr.split(' ');
+        if (line.length < 2) {
+          return cb(new Error(`Invalid line: "${line.join(` `)}"`));
+        }
+        const [objectID, refName, ...refAttributes] = line;
+        const symrefTarget =
+          refAttributes
+            .filter((a) => a.startsWith('symref-target:'))
+            .map((a) => a.substr('symref-target:'.length))
+            .find(() => true) ?? null;
+        const peeled = refAttributes
+          .filter((a) => a.startsWith('peeled:'))
+          .map((a) => a.substr('peeled:'.length));
+        const entry: LsRefsResponseEntry = {
+          objectID,
+          refName,
+          symrefTarget,
+          peeled,
+        };
+        this.push(entry);
+        cb();
+      },
+    });
+  }
+}
+
+export async function parseLsRefsResponse(
+  response: NodeJS.ReadableStream,
+): Promise<LsRefsResponseEntry[]> {
+  return await new Promise<LsRefsResponseEntry[]>((resolve, reject) => {
+    const result: LsRefsResponseEntry[] = [];
+    response
+      .on(`error`, reject)
+      .pipe(new PacketLineParser())
+      .on(`error`, reject)
+      .pipe(new LsRefsResponseParser())
+      .on(`error`, reject)
+      .on(`data`, (entry: LsRefsResponseEntry) => result.push(entry))
+      .on(`end`, () => resolve(result));
+  });
+}

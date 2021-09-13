@@ -19,9 +19,11 @@
     "build": "tsc"
   },
   "dependencies": {
-    "@es-git/core": "^0.10.0"
+    "@rollingversions/git-core": "^0.0.0"
   },
-  "devDependencies": {},
+  "devDependencies": {
+    "@types/node": "*"
+  },
   "peerDependencies": {},
   "engines": {
     "node": ">=14.0.0"

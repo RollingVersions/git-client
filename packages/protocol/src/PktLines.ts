@@ -1,12 +1,6 @@
 // https://git-scm.com/docs/protocol-common
-import {
-  AsyncBuffer,
-  fromHex,
-  toHexChar,
-  concat,
-  encode,
-  decode,
-} from '@es-git/core';
+import {fromHex, toHexChar, encode} from '@rollingversions/git-core';
+import {Transform} from 'stream';
 
 export enum SpecialPacketLine {
   /**
@@ -24,19 +18,14 @@ export enum SpecialPacketLine {
 }
 
 const SpecialPacketLineEncoded = {
-  [SpecialPacketLine.FlushPacket]: encode('0000'),
-  [SpecialPacketLine.DelimiterPacket]: encode('0001'),
-  [SpecialPacketLine.MessagePacket]: encode('0002'),
+  [SpecialPacketLine.FlushPacket]: Buffer.from('0000'),
+  [SpecialPacketLine.DelimiterPacket]: Buffer.from('0001'),
+  [SpecialPacketLine.MessagePacket]: Buffer.from('0002'),
 };
 
 export type PacketLine = string | Uint8Array | SpecialPacketLine;
 
-export interface NormalParsedPacketLine {
-  readonly peek: () => Promise<number>;
-  readonly toString: () => Promise<string>;
-  readonly toBuffer: () => Promise<Uint8Array>;
-  readonly stream: () => AsyncBuffer;
-}
+export type NormalParsedPacketLine = Buffer;
 export type ParsedPacketLine = NormalParsedPacketLine | SpecialPacketLine;
 
 export function isSpecialPacket(pkt: unknown): pkt is SpecialPacketLine {
@@ -52,7 +41,7 @@ export function isSpecialPacket(pkt: unknown): pkt is SpecialPacketLine {
 // whether or not they contain the trailing LF (stripping the LF if present, and not
 // complaining when it is missing).
 
-export function printPktLine(line: PacketLine): Uint8Array {
+export function printPktLine(line: PacketLine): Buffer {
   if (isSpecialPacket(line)) {
     return SpecialPacketLineEncoded[line];
   }
@@ -63,7 +52,7 @@ export function printPktLine(line: PacketLine): Uint8Array {
   // The first four bytes of the line, the pkt-len, indicates the total length
   // of the line, in hexadecimal. The pkt-len includes the 4 bytes used to contain
   // the length’s hexadecimal representation.
-  const buffer = new Uint8Array(4 + line.length);
+  const buffer = Buffer.alloc(4 + line.length);
   buffer[0] = toHexChar(buffer.length >>> 12);
   buffer[1] = toHexChar((buffer.length >>> 8) & 0xf);
   buffer[2] = toHexChar((buffer.length >>> 4) & 0xf);
@@ -73,65 +62,88 @@ export function printPktLine(line: PacketLine): Uint8Array {
 
   return buffer;
 }
-export function packetLinePrinter<TArgs extends any[]>(
-  fn: (...args: TArgs) => AsyncIterableIterator<PacketLine>,
-): (...args: TArgs) => AsyncIterableIterator<Uint8Array> {
-  return async function* (...args) {
-    for await (const line of fn(...args)) {
-      yield printPktLine(line);
-    }
-  };
-}
-export function packetLineParser<TArgs extends any[], TResult>(
-  fn: (
-    response: AsyncIterableIterator<ParsedPacketLine>,
-    ...args: TArgs
-  ) => TResult,
-): (response: AsyncIterableIterator<Uint8Array>, ...args: TArgs) => TResult {
-  return (response, ...args) => fn(parsePktLines(response), ...args);
-}
 
-export async function* parsePktLines(
-  response: AsyncIterableIterator<Uint8Array>,
-) {
-  const buffer = new AsyncBuffer(response);
+/**
+ * In "stream" mode, the output is a binary stream containing all the data
+ * in the normal packet lines concatenated into a single stream. Events are
+ * emitted for:
+ *  - flush_packet
+ *  - delimiter_packet
+ *  - message_packet
+ *
+ * In "line" mode, the output consists of a mix of values from the
+ * SpecialPacketLine enum, and `Buffer` objects representing a single
+ * normal packet line.
+ */
+export class PacketLineParser extends Transform {
+  constructor() {
+    let remainingOnLine = 0;
+    let buffer: Buffer[] = [];
+    const transform = (chunk: Buffer) => {
+      if (remainingOnLine !== 0) {
+        // Buffering a line
+        if (remainingOnLine > chunk.length) {
+          remainingOnLine -= chunk.length;
+          buffer.push(chunk);
+          return;
+        }
 
-  while (!(await buffer.isDone())) {
-    yield await unpktLine(buffer);
-  }
-}
-
-async function unpktLine(line: AsyncBuffer): Promise<ParsedPacketLine> {
-  const size = fromHex(await line.next(4));
-  if (size === 0) {
-    return SpecialPacketLine.FlushPacket;
-  }
-  if (size === 1) {
-    return SpecialPacketLine.DelimiterPacket;
-  }
-  if (size === 2) {
-    return SpecialPacketLine.MessagePacket;
-  }
-  const stream = new AsyncBuffer(line.rest(size - 4));
-  return {
-    peek: () => stream.peek(),
-    toString: async () => {
-      const str = decode(await consume(stream.rest()));
-      if (str.endsWith('\n')) {
-        return str.substr(0, str.length - 1);
+        buffer.push(chunk.slice(0, remainingOnLine));
+        this.push(Buffer.concat(buffer));
+        const rest = chunk.slice(remainingOnLine);
+        buffer = [];
+        remainingOnLine = 0;
+        transform(rest);
       } else {
-        return str;
+        // parsing header (4 bytes)
+        buffer.push(chunk);
+        const buf = Buffer.concat(buffer);
+        if (buf.length < 4) {
+          return;
+        }
+        buffer = [];
+        const size = fromHex(buf.slice(0, 4));
+        if (size === 0) {
+          this.push(SpecialPacketLine.FlushPacket);
+          transform(buf.slice(4));
+          return;
+        }
+        if (size === 1) {
+          this.push(SpecialPacketLine.DelimiterPacket);
+          transform(buf.slice(4));
+          return;
+        }
+        if (size === 2) {
+          this.push(SpecialPacketLine.MessagePacket);
+          transform(buf.slice(4));
+          return;
+        } else {
+          remainingOnLine = Math.max(0, size - 4);
+          transform(buf.slice(4));
+          return;
+        }
       }
-    },
-    toBuffer: () => consume(stream.rest()),
-    stream: () => stream,
-  };
+    };
+    super({
+      writableObjectMode: false,
+      readableObjectMode: true,
+      transform(chunk: Buffer, _encoding, cb) {
+        transform(chunk);
+        cb();
+      },
+    });
+  }
 }
 
-async function consume(stream: AsyncIterableIterator<Uint8Array>) {
-  const result: Uint8Array[] = [];
-  for await (const chunk of stream) {
-    result.push(chunk);
+export class PacketLineGenerator extends Transform {
+  constructor() {
+    super({
+      writableObjectMode: true,
+      readableObjectMode: false,
+      transform(line, _encoding, cb) {
+        this.push(printPktLine(line));
+        cb();
+      },
+    });
   }
-  return concat(...result);
 }

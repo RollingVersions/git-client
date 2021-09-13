@@ -1,17 +1,14 @@
-import {AsyncBuffer, decode, Type} from '@es-git/core';
-import {unpack} from '@es-git/packfile';
-import {
-  mergeAsyncIterator,
-  splitAsyncIterator,
-} from '@rollingversions/git-streams';
+import {decode, Type} from '@rollingversions/git-core';
+import {PackfileParserStream} from '@rollingversions/git-packfile';
 import {
   isSpecialPacket,
-  packetLineParser,
-  packetLinePrinter,
+  PacketLineGenerator,
+  PacketLineParser,
   SpecialPacketLine,
 } from './PktLines';
 import ObjectFilter, {objectFiltersToString} from './ObjectFilter';
 import Capabilities, {composeCapabilityList} from './CapabilityList';
+import {PassThrough, Transform} from 'stream';
 
 // Sample Request:
 // 0016object-format=sha1
@@ -164,103 +161,105 @@ export default interface FetchCommand {
   packfileUriProtocols?: readonly string[];
 }
 
-export const composeFetchCommand = packetLinePrinter(
-  async function* composeLsRefsCommand(
-    command: FetchCommand,
-    capabilities: Capabilities,
-  ) {
-    yield `command=fetch\n`;
-    yield* composeCapabilityList(capabilities);
-    yield SpecialPacketLine.DelimiterPacket;
-    if (command.thinPack) {
-      yield `thin-pack\n`;
-    }
-    if (command.noProgress) {
-      yield `no-progress\n`;
-    }
-    if (command.includeTag) {
-      yield `include-tag\n`;
-    }
-    for (const want of command.want) {
-      yield `want ${want}\n`;
-    }
-    for (const have of command.have ?? []) {
-      yield `have ${have}\n`;
-    }
-    for (const shallow of command.shallow ?? []) {
-      yield `shallow ${shallow}\n`;
-    }
-    if (command.deepen !== undefined) {
-      yield `deepen ${command.deepen}\n`;
-    }
-    if (command.deepenRelative) {
-      yield `deepen-relative\n`;
-    }
-    if (command.deepenSince !== undefined) {
-      yield `deepen-since ${command.deepenSince}\n`;
-    }
-    for (const deepenNot of command.deepenNot ?? []) {
-      yield `deepen-not ${deepenNot}\n`;
-    }
-    if (command.filter?.length) {
-      yield `filter ${objectFiltersToString(...command.filter)}`;
-    }
-    for (const wantRefs of command.wantRefs ?? []) {
-      yield `want-ref ${wantRefs}\n`;
-    }
-    if (command.sidebandAll) {
-      yield `sideband-all\n`;
-    }
-    if (command.packfileUriProtocols?.length) {
-      yield `packfile-uris ${command.packfileUriProtocols.join(',')}\n`;
-    }
-    yield `done`;
-    yield SpecialPacketLine.FlushPacket;
-  },
-);
-
-export enum FetchResponseEntryKind {
-  Header,
-  Progress,
-  Error,
-  Object,
-  RawPackfileChunk,
+export function composeFetchCommand(
+  command: FetchCommand,
+  capabilities: Capabilities,
+): NodeJS.ReadableStream {
+  const packetLines = new PacketLineGenerator();
+  packetLines.write(`command=fetch\n`);
+  for (const capability of composeCapabilityList(capabilities)) {
+    packetLines.write(capability);
+  }
+  packetLines.write(SpecialPacketLine.DelimiterPacket);
+  if (command.thinPack) {
+    packetLines.write(`thin-pack\n`);
+  }
+  if (command.noProgress) {
+    packetLines.write(`no-progress\n`);
+  }
+  if (command.includeTag) {
+    packetLines.write(`include-tag\n`);
+  }
+  for (const want of command.want) {
+    packetLines.write(`want ${want}\n`);
+  }
+  for (const have of command.have ?? []) {
+    packetLines.write(`have ${have}\n`);
+  }
+  for (const shallow of command.shallow ?? []) {
+    packetLines.write(`shallow ${shallow}\n`);
+  }
+  if (command.deepen !== undefined) {
+    packetLines.write(`deepen ${command.deepen}\n`);
+  }
+  if (command.deepenRelative) {
+    packetLines.write(`deepen-relative\n`);
+  }
+  if (command.deepenSince !== undefined) {
+    packetLines.write(`deepen-since ${command.deepenSince}\n`);
+  }
+  for (const deepenNot of command.deepenNot ?? []) {
+    packetLines.write(`deepen-not ${deepenNot}\n`);
+  }
+  if (command.filter?.length) {
+    packetLines.write(`filter ${objectFiltersToString(...command.filter)}`);
+  }
+  for (const wantRefs of command.wantRefs ?? []) {
+    packetLines.write(`want-ref ${wantRefs}\n`);
+  }
+  if (command.sidebandAll) {
+    packetLines.write(`sideband-all\n`);
+  }
+  if (command.packfileUriProtocols?.length) {
+    packetLines.write(
+      `packfile-uris ${command.packfileUriProtocols.join(',')}\n`,
+    );
+  }
+  packetLines.write(`done`);
+  packetLines.write(SpecialPacketLine.FlushPacket);
+  packetLines.end();
+  return packetLines;
 }
-export interface FetchResponseEntryHeader {
-  kind: FetchResponseEntryKind.Header;
-  text: string;
-}
-export interface FetchResponseEntryProgress {
-  kind: FetchResponseEntryKind.Progress;
-  text: string;
-}
-export interface FetchResponseEntryError {
-  kind: FetchResponseEntryKind.Error;
-  text: string;
-}
-interface FetchResponseEntryRawPackfileChunk {
-  kind: FetchResponseEntryKind.RawPackfileChunk;
-  chunks: AsyncBuffer;
-}
-
-type RawFetchResponseEntry =
-  | FetchResponseEntryHeader
-  | FetchResponseEntryProgress
-  | FetchResponseEntryError
-  | FetchResponseEntryRawPackfileChunk;
 
 export interface FetchResponseEntryObject {
-  kind: FetchResponseEntryKind.Object;
   type: Type;
   hash: string;
   body: Uint8Array;
 }
 
-export type FetchResponseEntry =
-  | FetchResponseEntryHeader
-  | FetchResponseEntryProgress
-  | FetchResponseEntryError
-  | FetchResponseEntryObject;
+export class FetchResponseMetadataParser extends Transform {
+  constructor() {
+    super({
+      writableObjectMode: true,
+      readableObjectMode: false,
+      transform(pkt: SpecialPacketLine | Buffer, _encoding, cb) {
+        if (isSpecialPacket(pkt)) {
+          this.emit(`special`, pkt);
+          return cb();
+        }
+
+        const channel = pkt[0];
+        switch (channel) {
+          case 1:
+            this.push(pkt.slice(1));
+            break;
+          case 2: {
+            this.emit(`progress`, decode(pkt.slice(1)).trim());
+            break;
+          }
+          case 3: {
+            this.emit(`error`, new Error(decode(pkt.slice(1)).trim()));
+            break;
+          }
+          default:
+            break;
+        }
+        cb();
+      },
+    });
+  }
+}
+
 // use split iterator to produce 4 "channels":
 // 1. headers
 // 2. packfile chunks
@@ -268,80 +267,78 @@ export type FetchResponseEntry =
 // 4. errors
 // parse the packfile chunks, then merge everything back together
 // using mergeAsyncIterator
-export const parseFetchResponse = packetLineParser(function parseLsRefsResponse(
-  response,
-) {
-  async function* parseResponseLines(): AsyncGenerator<RawFetchResponseEntry> {
-    let inPackfile = false;
-    for await (const pkt of response) {
-      if (isSpecialPacket(pkt)) {
-        continue;
-      }
-      if (inPackfile) {
-        const channel = await pkt.peek();
-        switch (channel) {
-          case 1:
-            yield {
-              kind: FetchResponseEntryKind.RawPackfileChunk,
-              chunks: pkt.stream(),
-            };
-            break;
-          case 2: {
-            const text = decode(await pkt.toBuffer(), 1).trim();
-            yield {kind: FetchResponseEntryKind.Progress, text};
-            break;
-          }
-          case 3: {
-            const text = decode(await pkt.toBuffer(), 1).trim();
-            yield {kind: FetchResponseEntryKind.Error, text};
-            break;
-          }
-          default:
-            await pkt.stream().complete();
-        }
-      } else {
-        const text = await pkt.toString();
-        if (text === 'packfile') {
-          inPackfile = true;
-        } else {
-          yield {kind: FetchResponseEntryKind.Header, text};
-        }
-      }
-    }
-  }
-  const [metadata, packetChunks] = splitAsyncIterator(
-    parseResponseLines(),
-    (c) => (c.kind !== FetchResponseEntryKind.RawPackfileChunk ? c : undefined),
-    (c) => (c.kind === FetchResponseEntryKind.RawPackfileChunk ? c : undefined),
-  );
-  async function* getRawChunks() {
-    for await (const {chunks} of packetChunks) {
-      // consume the channel identifier
-      chunks.next();
-      yield* chunks.rest();
-    }
-  }
-  async function* unpackRawChunks(): AsyncIterableIterator<FetchResponseEntryObject> {
-    for await (const obj of unpack(getRawChunks())) {
-      yield {
-        kind: FetchResponseEntryKind.Object,
-        type: asType(obj.type),
-        hash: obj.hash,
-        body: obj.body,
-      };
-    }
-  }
-  return mergeAsyncIterator<FetchResponseEntry>(unpackRawChunks(), metadata);
-});
-
-function asType(type: string): Type {
-  switch (type) {
-    case Type.blob:
-    case Type.commit:
-    case Type.tag:
-    case Type.tree:
-      return type;
-    default:
-      return Type.unknown;
-  }
+export function parseFetchResponse(response: NodeJS.ReadableStream) {
+  const output = new PassThrough({objectMode: true});
+  response
+    .on('error', (err) => output.emit(`error`, err))
+    .pipe(new PacketLineParser())
+    .on('error', (err) => output.emit(`error`, err))
+    .pipe(new FetchResponseMetadataParser())
+    .on('error', (err) => output.emit(`error`, err))
+    .on('progress', (progress) => output.emit(`progress`, progress))
+    .pipe(new PackfileParserStream())
+    .on('error', (err) => output.emit(`error`, err))
+    .pipe(output);
+  return output;
+  // async function* parseResponseLines(): AsyncGenerator<RawFetchResponseEntry> {
+  //   let inPackfile = false;
+  //   for await (const pkt of response) {
+  //     if (isSpecialPacket(pkt)) {
+  //       continue;
+  //     }
+  //     if (inPackfile) {
+  //       const channel = await pkt.peek();
+  //       switch (channel) {
+  //         case 1:
+  //           yield {
+  //             kind: FetchResponseEntryKind.RawPackfileChunk,
+  //             chunks: pkt.stream(),
+  //           };
+  //           break;
+  //         case 2: {
+  //           const text = decode(await pkt.toBuffer(), 1).trim();
+  //           yield {kind: FetchResponseEntryKind.Progress, text};
+  //           break;
+  //         }
+  //         case 3: {
+  //           const text = decode(await pkt.toBuffer(), 1).trim();
+  //           yield {kind: FetchResponseEntryKind.Error, text};
+  //           break;
+  //         }
+  //         default:
+  //           await pkt.stream().complete();
+  //       }
+  //     } else {
+  //       const text = await pkt.toString();
+  //       if (text === 'packfile') {
+  //         inPackfile = true;
+  //       } else {
+  //         yield {kind: FetchResponseEntryKind.Header, text};
+  //       }
+  //     }
+  //   }
+  // }
+  // const [metadata, packetChunks] = splitAsyncIterator(
+  //   parseResponseLines(),
+  //   (c) => (c.kind !== FetchResponseEntryKind.RawPackfileChunk ? c : undefined),
+  //   (c) => (c.kind === FetchResponseEntryKind.RawPackfileChunk ? c : undefined),
+  // );
+  // async function* getRawChunks() {
+  //   for await (const {chunks} of packetChunks) {
+  //     // consume the channel identifier
+  //     chunks.next();
+  //     yield* chunks.rest();
+  //   }
+  // }
+  // async function* unpackRawChunks(): AsyncIterableIterator<FetchResponseEntryObject> {
+  //   for await (const obj of unpack(getRawChunks())) {
+  //     yield {
+  //       kind: FetchResponseEntryKind.Object,
+  //       type: asType(obj.type),
+  //       hash: obj.hash,
+  //       body: obj.body,
+  //     };
+  //   }
+  // }
+  // return mergeAsyncIterator<FetchResponseEntry>(unpackRawChunks(), metadata);
 }

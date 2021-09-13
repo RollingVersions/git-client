@@ -10,13 +10,13 @@ const defaultCapabilities: [string, string | boolean][] = [
   ['object-format', 'sha1'],
 ];
 export type {LsRefsCommand, LsRefsResponseEntry};
-export default async function* lsRefs<
+export default async function lsRefs<
   THeaders extends {set(name: string, value: string): unknown}
 >(
   repoURL: URL,
   command: LsRefsCommand,
   ctx: ContextWithServerCapabilities<THeaders>,
-): AsyncIterableIterator<LsRefsResponseEntry> {
+): Promise<LsRefsResponseEntry[]> {
   const url = new URL(
     `${
       repoURL.href.endsWith('.git') ? repoURL.href : `${repoURL.href}.git`
@@ -27,19 +27,32 @@ export default async function* lsRefs<
   headers.set('content-type', 'application/x-git-upload-pack-request');
   headers.set('git-protocol', 'version=2');
   headers.set('user-agent', ctx.agent);
-  yield* parseLsRefsResponse(
-    ctx.http.post(
-      url,
-      headers,
-      composeLsRefsCommand(
-        command,
-        new Map(
-          [
-            ['agent', ctx.agent] as const,
-            ...defaultCapabilities,
-          ].filter(([key]) => ctx.serverCapabilities.has(key)),
-        ),
+  const response = await ctx.http.post(
+    url,
+    headers,
+    composeLsRefsCommand(
+      command,
+      new Map(
+        [
+          ['agent', ctx.agent] as const,
+          ...defaultCapabilities,
+        ].filter(([key]) => ctx.serverCapabilities.has(key)),
       ),
     ),
   );
+  if (response.statusCode !== 200) {
+    const body = await new Promise<Buffer>((resolve, reject) => {
+      const body: Buffer[] = [];
+      response.body
+        .on(`data`, (chunk) => body.push(chunk))
+        .on(`error`, reject)
+        .on(`end`, () => resolve(Buffer.concat(body)));
+    });
+    throw new Error(
+      `Git server responded with status ${response.statusCode}: ${body.toString(
+        `utf8`,
+      )}`,
+    );
+  }
+  return await parseLsRefsResponse(response.body);
 }

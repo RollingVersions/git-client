@@ -5,6 +5,7 @@ import {
 import Context from './Context';
 
 export interface InitialResponse {
+  url: URL;
   capabilities: Capabilities;
 }
 export default async function initialRequest<
@@ -18,6 +19,28 @@ export default async function initialRequest<
   const headers = ctx.http.createHeaders(url);
   headers.set('git-protocol', 'version=2');
   headers.set('user-agent', ctx.agent);
-  const capabilities = await parseInitialResponse(ctx.http.get(url, headers));
-  return {capabilities};
+
+  const response = await ctx.http.get(url, headers);
+
+  if (response.statusCode !== 200) {
+    const body = await new Promise<Buffer>((resolve, reject) => {
+      const body: Buffer[] = [];
+      response.body
+        .on(`data`, (chunk) => body.push(chunk))
+        .on(`error`, reject)
+        .on(`end`, () => resolve(Buffer.concat(body)));
+    });
+    throw new Error(
+      `Git server responded with status ${response.statusCode}: ${body.toString(
+        `utf8`,
+      )}`,
+    );
+  }
+  console.log('response.url =', response.url.href);
+
+  const capabilities = await parseInitialResponse(response.body);
+  return {
+    url: new URL(response.url.href.split(`.git`)[0] + `.git`),
+    capabilities,
+  };
 }

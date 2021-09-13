@@ -1,5 +1,5 @@
 {
-  "name": "@rollingversions/git-protocol",
+  "name": "@rollingversions/git-core",
   "version": "0.0.0",
   "main": "dist/index.cjs",
   "module": "dist/index.mjs",
@@ -18,13 +18,8 @@
   "scripts": {
     "build": "tsc"
   },
-  "dependencies": {
-    "@rollingversions/git-core": "^0.0.0",
-    "@rollingversions/git-packfile": "^0.0.0"
-  },
-  "devDependencies": {
-    "@types/node": "*"
-  },
+  "dependencies": {},
+  "devDependencies": {},
   "peerDependencies": {},
   "engines": {
     "node": ">=14.0.0"

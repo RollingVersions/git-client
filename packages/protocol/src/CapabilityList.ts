@@ -8,9 +8,10 @@ type Capabilities = Pick<
 >;
 export default Capabilities;
 
-export function* composeCapabilityList(
+export function composeCapabilityList(
   capabilities: Capabilities,
-): Generator<PacketLine> {
+): PacketLine[] {
+  const result: PacketLine[] = [];
   for (const [key, value] of capabilities.entries()) {
     if (!/^[a-z0-9\-\_]+$/i.test(key)) {
       throw new Error(`Invalid capability key: "${key}"`);
@@ -19,7 +20,7 @@ export function* composeCapabilityList(
       continue;
     }
     if (value === true) {
-      yield `${key}\n`;
+      result.push(`${key}\n`);
     } else {
       if (
         !/^[a-z0-9\ \-\_\.\,\?\\\/\{\}\[\]\(\)\<\>\!\@\#\$\%\^\&\*\+\=\:\;]+$/i.test(
@@ -28,7 +29,8 @@ export function* composeCapabilityList(
       ) {
         throw new Error(`Invalid capability value for "${key}": "${value}"`);
       }
-      yield `${key}=${value}\n`;
+      result.push(`${key}=${value}\n`);
     }
   }
+  return result;
 }

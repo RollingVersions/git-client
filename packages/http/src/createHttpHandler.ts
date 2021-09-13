@@ -1,56 +1,47 @@
-import fetch, {Headers} from 'cross-fetch';
-import {
-  asyncIteratorToStream,
-  streamToAsyncIterator,
-} from '@rollingversions/git-streams';
-import HttpInterface from './HttpInterface';
+import request from 'http-basic';
+import HttpInterface, {HttpResponse} from './HttpInterface';
 
 const createHttpHandler = (options: {
   [key: string]: any;
-}): HttpInterface<Headers> => ({
-  createHeaders: () => new Headers(),
-  get: async function* (url, headers) {
-    const response = await fetch(url.href, {...options, headers});
-    if (!response.ok) {
-      throw new Error(
-        `Server responded to ${url.href} with status code ${
-          response.status
-        }: ${await response.text()}`,
+}): HttpInterface<Map<string, string>> => ({
+  createHeaders: () => new Map(),
+  get: async (url, headers) => {
+    return await new Promise<HttpResponse>((resolve, reject) => {
+      request(
+        `GET`,
+        url.href,
+        {...options, headers: Object.fromEntries(headers.entries())},
+        (err, res) => {
+          if (err) reject(err);
+          else
+            resolve({
+              statusCode: res!.statusCode,
+              url: new URL(res!.url),
+              body: res!.body,
+            });
+        },
       );
-    }
-    if (response.body) {
-      for await (const chunk of streamToAsyncIterator(response.body)) {
-        yield chunk;
-      }
-    } else {
-      yield new Uint8Array(await response.arrayBuffer());
-    }
-  },
-  post: async function* (url, headers, body) {
-    const response = await fetch(url.href, {
-      ...options,
-      method: 'POST',
-      headers,
-      // @ts-expect-error - on NodeJS this is a NodeJS stream, in the browser it is a browser stream
-      body: await asyncIteratorToStream(body),
     });
-    if (!response.ok) {
-      console.error(
-        `Server responded to ${url.href} with status code ${response.status}`,
+  },
+  post: async (url, headers, body) => {
+    return await new Promise<HttpResponse>((resolve, reject) => {
+      body.pipe(
+        request(
+          `POST`,
+          url.href,
+          {...options, headers: Object.fromEntries(headers.entries())},
+          (err, res) => {
+            if (err) reject(err);
+            else
+              resolve({
+                statusCode: res!.statusCode,
+                url: new URL(res!.url),
+                body: res!.body,
+              });
+          },
+        ) as NodeJS.WritableStream,
       );
-      throw new Error(
-        `Server responded to ${url.href} with status code ${
-          response.status
-        }: ${await response.text()}`,
-      );
-    }
-    if (response.body) {
-      for await (const chunk of streamToAsyncIterator(response.body)) {
-        yield chunk;
-      }
-    } else {
-      yield new Uint8Array(await response.arrayBuffer());
-    }
+    });
   },
 });
 

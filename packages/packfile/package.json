@@ -1,5 +1,5 @@
 {
-  "name": "@rollingversions/git-protocol",
+  "name": "@rollingversions/git-packfile",
   "version": "0.0.0",
   "main": "dist/index.cjs",
   "module": "dist/index.mjs",
@@ -20,7 +20,8 @@
   },
   "dependencies": {
     "@rollingversions/git-core": "^0.0.0",
-    "@rollingversions/git-packfile": "^0.0.0"
+    "@types/pako": "^1.0.2",
+    "pako": "^1.0.5"
   },
   "devDependencies": {
     "@types/node": "*"
