@@ -75,27 +75,25 @@ async function pullRepo() {
   });
 
   console.warn(`git_lsrefs`, `Git ls refs request ${repoURL.href}`);
-  const remoteRefs = await git.asyncIteratorToArray(
-    git.lsRefs(
-      repoURL,
-      {
-        // TODO: what do we need here?
-        // symrefs: true,
-        refPrefix: ['refs/heads/', 'refs/tags/', 'refs/pull/'],
-      },
-      {
-        http,
-        agent: 'rollingversions.com',
-        serverCapabilities,
-      },
-    ),
+  const remoteRefs = await git.lsRefs(
+    repoURL,
+    {
+      // TODO: what do we need here?
+      // symrefs: true,
+      refPrefix: ['refs/heads/', 'refs/tags/', 'refs/pull/'],
+    },
+    {
+      http,
+      agent: 'rollingversions.com',
+      serverCapabilities,
+    },
   );
   for (const ref of remoteRefs) {
     console.warn(`ref:`, ref);
   }
 
   console.warn(`git_fetch_objects`, `Git fetch request ${repoURL.href}`);
-  for await (const entry of git.fetchObjects(
+  const fetchResponse = await git.fetchObjects(
     repoURL,
     {
       want: [...new Set(remoteRefs.map((ref) => ref.objectID))],
@@ -107,17 +105,23 @@ async function pullRepo() {
       agent: 'rollingversions.com',
       serverCapabilities,
     },
-  )) {
-    if (entry.kind === git.FetchResponseEntryKind.Object) {
-      if (gitObj.objectIsCommit(entry.body)) {
-        const commit = gitObj.decodeObject(entry.body);
-        console.warn(`${entry.hash} ${commit.body.message}`);
-      }
-    }
-  }
+  );
+  await new Promise((resolve, reject) => {
+    fetchResponse
+      .on(`data`, (entry) => {
+        if (gitObj.objectIsCommit(entry.body)) {
+          const commit = gitObj.decodeObject(entry.body);
+          console.warn(`${entry.hash} ${commit.body.message}`);
+        }
+      })
+      .on(`error`, reject)
+      .on(`end`, () => resolve());
+  });
+  console.log(`!done!`);
 }
 
 pullRepo().catch((ex) => {
+  console.error(`Request failed`);
   console.error(ex.stack);
   process.exit(1);
 });

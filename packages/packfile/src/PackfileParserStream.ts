@@ -49,7 +49,7 @@ export default class PackfileParserStream extends Transform {
               offsets,
               digest: createHash('sha1'),
               onEntry: (entry) => {
-                const type = GitObjectTypeID[entry.type];
+                const type = GitObjectTypeID[entry.type] ?? `unknown`;
                 const body = encodeRaw(type, entry.body);
                 const hash = createHash('sha1').update(body).digest('hex');
 
@@ -270,6 +270,7 @@ async function refDelta(chunk: Buffer, ctx: BodyContext): Promise<State> {
     );
   }
   const ref = chunk.slice(0, 20).toString('hex');
+  ctx.digest.update(chunk.slice(0, 20));
   const remaining = chunk.slice(20);
   return await parseBody(
     remaining,
@@ -321,11 +322,11 @@ async function parseBody(
         );
       }
       const inputBuffer = Buffer.concat(inputBuffers);
+      ctx.digest.update(inputBuffer.slice(0, inflate.bytesWritten));
+      const remaining = inputBuffer.slice(inflate.bytesWritten);
 
       onBody(outputBuffer, inputBuffer).then(
         () => {
-          ctx.digest.update(inputBuffer.slice(0, inflate.bytesWritten));
-          const remaining = inputBuffer.slice(inflate.bytesWritten);
           resolve(
             parseHeader(remaining, {
               ...ctx,

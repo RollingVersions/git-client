@@ -36,6 +36,7 @@
   "scripts": {
     "http": "yarn workspace @rollingversions/git-http",
     "objects": "yarn workspace @rollingversions/git-objects",
+    "packfile": "yarn workspace @rollingversions/git-packfile",
     "protocol": "yarn workspace @rollingversions/git-protocol",
     "streams": "yarn workspace @rollingversions/git-streams",
     "build": "yarn build:links && yarn build:ts && yarn build:rollup",

@@ -1,4 +1,3 @@
-export {default as AsyncBuffer} from './AsyncBuffer';
 export {default as Buffer} from './Buffer';
 export {
   decode,

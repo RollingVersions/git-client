@@ -13,6 +13,5 @@
   "references": [
     {"path": "../core"},
     {"path": "../packfile"},
-    {"path": "../streams"},
   ],
 }

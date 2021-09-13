@@ -2,30 +2,16 @@ import {
   composeFetchCommand,
   parseFetchResponse,
   FetchCommand,
-  FetchResponseEntryError,
-  FetchResponseEntry,
-  FetchResponseEntryHeader,
-  FetchResponseEntryKind,
   FetchResponseEntryObject,
-  FetchResponseEntryProgress,
 } from '@rollingversions/git-protocol';
 import {ContextWithServerCapabilities} from './Context';
 
 const defaultCapabilities: [string, string | boolean][] = [
   ['object-format', 'sha1'],
 ];
-export type {
-  FetchCommand,
-  FetchResponseEntryError,
-  FetchResponseEntryHeader,
-  FetchResponseEntryProgress,
-  FetchResponseEntryObject,
-  FetchResponseEntry,
-};
+export type {FetchCommand, FetchResponseEntryObject};
 
-export {FetchResponseEntryKind};
-
-export default async function* fetchObjects<
+export default async function fetchObjects<
   THeaders extends {set(name: string, value: string): unknown}
 >(
   repoURL: URL,
@@ -42,19 +28,33 @@ export default async function* fetchObjects<
   headers.set('content-type', 'application/x-git-upload-pack-request');
   headers.set('git-protocol', 'version=2');
   headers.set('user-agent', ctx.agent);
-  yield* parseFetchResponse(
-    ctx.http.post(
-      url,
-      headers,
-      composeFetchCommand(
-        command,
-        new Map(
-          [
-            ['agent', ctx.agent] as const,
-            ...defaultCapabilities,
-          ].filter(([key]) => ctx.serverCapabilities.has(key)),
-        ),
+
+  const response = await ctx.http.post(
+    url,
+    headers,
+    composeFetchCommand(
+      command,
+      new Map(
+        [
+          ['agent', ctx.agent] as const,
+          ...defaultCapabilities,
+        ].filter(([key]) => ctx.serverCapabilities.has(key)),
       ),
     ),
   );
+  if (response.statusCode !== 200) {
+    const body = await new Promise<Buffer>((resolve, reject) => {
+      const body: Buffer[] = [];
+      response.body
+        .on(`data`, (chunk) => body.push(chunk))
+        .on(`error`, reject)
+        .on(`end`, () => resolve(Buffer.concat(body)));
+    });
+    throw new Error(
+      `Git server responded with status ${response.statusCode}: ${body.toString(
+        `utf8`,
+      )}`,
+    );
+  }
+  return parseFetchResponse(response.body);
 }
