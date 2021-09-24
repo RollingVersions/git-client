@@ -63,11 +63,20 @@ async function pullRepo() {
 
   const owner = process.argv[2] ?? (await ask.input(`owner`));
   const name = process.argv[3] ?? (await ask.input(`name`));
+  const mode =
+    process.argv[4] ?? (await ask.list(`mode?`, [`commits`, `tree`]));
+  if (![`commits`, `tree`].includes(mode)) {
+    console.error(`Invalid mode`);
+    return process.exit(1);
+  }
+  const headCommit = process.argv[5];
+
   const repo = {owner, name};
 
   const http = await getHttpHandler(repo, secrets);
   const repoURL = new URL(`https://github.com/${repo.owner}/${repo.name}.git`);
 
+  const start = Date.now();
   console.warn(`git_init`, `Git init request ${repoURL.href}`);
   const {capabilities: serverCapabilities} = await git.initialRequest(repoURL, {
     http,
@@ -75,19 +84,24 @@ async function pullRepo() {
   });
 
   console.warn(`git_lsrefs`, `Git ls refs request ${repoURL.href}`);
-  const remoteRefs = await git.lsRefs(
-    repoURL,
-    {
-      // TODO: what do we need here?
-      // symrefs: true,
-      refPrefix: ['refs/heads/', 'refs/tags/', 'refs/pull/'],
-    },
-    {
-      http,
-      agent: 'rollingversions.com',
-      serverCapabilities,
-    },
-  );
+  const remoteRefs = headCommit
+    ? [{objectID: headCommit}]
+    : await git.lsRefs(
+        repoURL,
+        {
+          // TODO: what do we need here?
+          // symrefs: true,
+          refPrefix:
+            mode === 'tree'
+              ? ['refs/heads/master', 'refs/heads/main']
+              : ['refs/heads/', 'refs/tags/', 'refs/pull/'],
+        },
+        {
+          http,
+          agent: 'rollingversions.com',
+          serverCapabilities,
+        },
+      );
   for (const ref of remoteRefs) {
     console.warn(`ref:`, ref);
   }
@@ -95,29 +109,59 @@ async function pullRepo() {
   console.warn(`git_fetch_objects`, `Git fetch request ${repoURL.href}`);
   const fetchResponse = await git.fetchObjects(
     repoURL,
-    {
-      want: [...new Set(remoteRefs.map((ref) => ref.objectID))],
-      have: [],
-      filter: [git.treeDepth(0)],
-    },
+
+    mode === 'tree'
+      ? {
+          want: [...new Set(remoteRefs.map((ref) => ref.objectID))],
+          have: [],
+          filter: [git.blobNone(0)],
+          deepen: 1,
+        }
+      : {
+          want: [...new Set(remoteRefs.map((ref) => ref.objectID))],
+          have: [],
+          filter: [git.treeDepth(0)],
+        },
     {
       http,
       agent: 'rollingversions.com',
       serverCapabilities,
     },
   );
+  const trees = new Map();
+  let rootHash = ``;
   await new Promise((resolve, reject) => {
     fetchResponse
       .on(`data`, (entry) => {
         if (gitObj.objectIsCommit(entry.body)) {
           const commit = gitObj.decodeObject(entry.body);
           console.warn(`${entry.hash} ${commit.body.message}`);
+          headTreeSha = commit.body.tree;
+          rootHash = commit.body.tree;
+        }
+        if (gitObj.objectIsTree(entry.body)) {
+          const tree = gitObj.decodeObject(entry.body);
+          trees.set(entry.hash, tree.body);
         }
       })
       .on(`error`, reject)
       .on(`end`, () => resolve());
   });
-  console.log(`!done!`);
+  if (mode === `tree`) {
+    const printTree = (hash, path) => {
+      const tree = trees.get(hash);
+      for (const [name, {mode, hash}] of Object.entries(tree)) {
+        console.log(`${path}/${name} ${gitObj.Mode[mode]} ${hash}`);
+
+        if (mode === gitObj.Mode.tree) {
+          printTree(hash, `${path}/${name}`);
+        }
+      }
+    };
+    printTree(rootHash, ``);
+  }
+  const end = Date.now();
+  console.log(`Pull duration: ${end - start}`);
 }
 
 pullRepo().catch((ex) => {
