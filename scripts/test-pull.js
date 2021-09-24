@@ -2,6 +2,7 @@ const fs = require('fs');
 const {URL} = require('url');
 const {default: GitHubClient, auth} = require('@github-graph/api');
 const ask = require('interrogator');
+const chalk = require('chalk');
 const git = require('../packages/http');
 const gitObj = require('../packages/objects');
 
@@ -66,7 +67,7 @@ async function pullRepo() {
   const mode =
     process.argv[4] ?? (await ask.list(`mode?`, [`commits`, `tree`]));
   if (![`commits`, `tree`].includes(mode)) {
-    console.error(`Invalid mode`);
+    console.error(chalk.red(`Invalid mode`));
     return process.exit(1);
   }
   const headCommit = process.argv[5];
@@ -77,13 +78,34 @@ async function pullRepo() {
   const repoURL = new URL(`https://github.com/${repo.owner}/${repo.name}.git`);
 
   const start = Date.now();
-  console.warn(`git_init`, `Git init request ${repoURL.href}`);
+  console.warn(chalk.cyan(`git_init`), `Git init request ${repoURL.href}`);
   const {capabilities: serverCapabilities} = await git.initialRequest(repoURL, {
     http,
     agent: 'rollingversions.com',
   });
 
-  console.warn(`git_lsrefs`, `Git ls refs request ${repoURL.href}`);
+  const pullObjects = async (want) => {
+    const fetchResponse = await git.fetchObjects(
+      repoURL,
+      {want: [...new Set(want)]},
+      {
+        http,
+        agent: 'rollingversions.com',
+        serverCapabilities,
+      },
+    );
+
+    const entries = new Map();
+    await new Promise((resolve, reject) => {
+      fetchResponse
+        .on(`data`, (entry) => entries.set(entry.hash, entry))
+        .on(`error`, reject)
+        .on(`end`, () => resolve());
+    });
+    return entries;
+  };
+
+  console.warn(chalk.cyan(`git_lsrefs`), `Git ls refs request ${repoURL.href}`);
   const remoteRefs = headCommit
     ? [{objectID: headCommit}]
     : await git.lsRefs(
@@ -106,20 +128,21 @@ async function pullRepo() {
     console.warn(`ref:`, ref);
   }
 
-  console.warn(`git_fetch_objects`, `Git fetch request ${repoURL.href}`);
+  console.warn(
+    chalk.cyan(`git_fetch_objects`),
+    `Git fetch request ${repoURL.href}`,
+  );
   const fetchResponse = await git.fetchObjects(
     repoURL,
 
     mode === 'tree'
       ? {
           want: [...new Set(remoteRefs.map((ref) => ref.objectID))],
-          have: [],
-          filter: [git.blobNone(0)],
+          filter: [git.blobNone()],
           deepen: 1,
         }
       : {
           want: [...new Set(remoteRefs.map((ref) => ref.objectID))],
-          have: [],
           filter: [git.treeDepth(0)],
         },
     {
@@ -135,33 +158,64 @@ async function pullRepo() {
       .on(`data`, (entry) => {
         if (gitObj.objectIsCommit(entry.body)) {
           const commit = gitObj.decodeObject(entry.body);
-          console.warn(`${entry.hash} ${commit.body.message}`);
+          console.warn(`${chalk.magenta(entry.hash)} ${commit.body.message}`);
           headTreeSha = commit.body.tree;
           rootHash = commit.body.tree;
-        }
-        if (gitObj.objectIsTree(entry.body)) {
+        } else if (gitObj.objectIsTree(entry.body)) {
           const tree = gitObj.decodeObject(entry.body);
           trees.set(entry.hash, tree.body);
+        } else {
+          const obj = gitObj.decodeObject(entry.body);
+          console.error(
+            chalk.red(`Unexpected object ${entry.hash} of type ${obj.type}`),
+          );
         }
       })
       .on(`error`, reject)
       .on(`end`, () => resolve());
   });
   if (mode === `tree`) {
-    const printTree = (hash, path) => {
+    const packages = [];
+    const walkTree = (hash, parentPath) => {
       const tree = trees.get(hash);
       for (const [name, {mode, hash}] of Object.entries(tree)) {
-        console.log(`${path}/${name} ${gitObj.Mode[mode]} ${hash}`);
+        const path = `${parentPath}/${name}`;
+        const modeName = gitObj.Mode[mode];
+        const modeColor =
+          {file: chalk.yellow, tree: chalk.blue}[modeName] ?? chalk.red;
+        console.log(`${path} ${modeColor(gitObj.Mode[mode])} ${hash}`);
 
         if (mode === gitObj.Mode.tree) {
-          printTree(hash, `${path}/${name}`);
+          walkTree(hash, path);
+        } else if (
+          mode === gitObj.Mode.file &&
+          (name === `rolling-package.toml` || name === 'package.json')
+        ) {
+          packages.push({path, hash});
         }
       }
     };
-    printTree(rootHash, ``);
+    walkTree(rootHash, ``);
+    if (packages.length) {
+      const packageObjects = await pullObjects(packages.map((p) => p.hash));
+      for (const {path, hash} of packages) {
+        const entry = packageObjects.get(hash);
+        if (entry) {
+          const obj = gitObj.decodeObject(entry.body);
+          console.log(`${chalk.magenta(path)} ${hash} ${obj.type}`);
+          console.log(``);
+          console.log(Buffer.from(obj.body).toString(`utf8`));
+          console.log(``);
+          console.log(``);
+        } else {
+          console.error(chalk.red(`${path} ${hash} NOT FOUND!!!`));
+        }
+      }
+    }
   }
+
   const end = Date.now();
-  console.log(`Pull duration: ${end - start}`);
+  console.log(chalk.green(`Pull duration: ${end - start}`));
 }
 
 pullRepo().catch((ex) => {
