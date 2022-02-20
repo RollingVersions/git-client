@@ -36,7 +36,6 @@ export default async function initialRequest<
       )}`,
     );
   }
-  console.log('response.url =', response.url.href);
 
   const capabilities = await parseInitialResponse(response.body);
   return {
