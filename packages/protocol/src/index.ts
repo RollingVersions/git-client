@@ -3,6 +3,7 @@ import FetchCommand, {
   composeFetchCommand,
   parseFetchResponse,
   FetchResponseEntryObject,
+  Stores,
 } from './FetchCommand';
 import {parseInitialResponse} from './InitialRequest';
 import LsRefsCommand, {
@@ -19,7 +20,7 @@ import ObjectFilter, {
 
 export type {Capabilities};
 export type {LsRefsCommand, LsRefsResponseEntry};
-export type {FetchCommand, FetchResponseEntryObject};
+export type {FetchCommand, FetchResponseEntryObject, Stores};
 
 export {parseInitialResponse};
 export {composeLsRefsCommand, parseLsRefsResponse};

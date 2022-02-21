@@ -1,5 +1,5 @@
 import {decode, Type} from '@rollingversions/git-core';
-import {PackfileParserStream} from '@rollingversions/git-packfile';
+import {PackfileParserStream, Stores} from '@rollingversions/git-packfile';
 import {
   isSpecialPacket,
   PacketLineGenerator,
@@ -9,6 +9,8 @@ import {
 import ObjectFilter, {objectFiltersToString} from './ObjectFilter';
 import Capabilities, {composeCapabilityList} from './CapabilityList';
 import {PassThrough, Transform} from 'stream';
+
+export type {Stores};
 
 // Sample Request:
 // 0016object-format=sha1
@@ -267,7 +269,10 @@ export class FetchResponseMetadataParser extends Transform {
 // 4. errors
 // parse the packfile chunks, then merge everything back together
 // using mergeAsyncIterator
-export function parseFetchResponse(response: NodeJS.ReadableStream) {
+export function parseFetchResponse(
+  response: NodeJS.ReadableStream,
+  stores?: Stores,
+) {
   const output = new PassThrough({objectMode: true});
   response
     .on('error', (err) => output.emit(`error`, err))
@@ -276,7 +281,7 @@ export function parseFetchResponse(response: NodeJS.ReadableStream) {
     .pipe(new FetchResponseMetadataParser())
     .on('error', (err) => output.emit(`error`, err))
     .on('progress', (progress) => output.emit(`progress`, progress))
-    .pipe(new PackfileParserStream())
+    .pipe(new PackfileParserStream(stores))
     .on('error', (err) => output.emit(`error`, err))
     .pipe(output);
   return output;
