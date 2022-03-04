@@ -5,5 +5,6 @@ export {default as PackfileGeneratorStream} from './PackfileGeneratorStream';
 export {
   default as PackfileParserStream,
   parsePackfile,
+  PackfileParserStreamV2,
 } from './PackfileParserStream';
 export type {Store, Stores} from './PackfileParserStream';

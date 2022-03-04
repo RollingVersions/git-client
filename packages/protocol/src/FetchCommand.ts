@@ -1,5 +1,5 @@
 import {decode, Type} from '@rollingversions/git-core';
-import {PackfileParserStream, Stores} from '@rollingversions/git-packfile';
+import {PackfileParserStreamV2, Stores} from '@rollingversions/git-packfile';
 import {
   isSpecialPacket,
   PacketLineGenerator,
@@ -288,10 +288,16 @@ export function parseFetchResponse(
   if (raw) {
     rawResponse.pipe(output);
   } else {
+    const buffer: Buffer[] = [];
     rawResponse
-      .pipe(new PackfileParserStream(stores))
-      .on('error', (err) => output.emit(`error`, err))
-      .pipe(output);
+      .on(`data`, (chunk) => {
+        buffer.push(chunk);
+      })
+      .on(`end`, () => {
+        new PackfileParserStreamV2(Buffer.concat(buffer), stores)
+          .on(`error`, (err) => output.emit(`error`, err))
+          .pipe(output);
+      });
   }
   return output;
 }

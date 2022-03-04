@@ -1,6 +1,6 @@
 import {concat, encode} from '@rollingversions/git-core';
 import {createHash} from 'crypto';
-import {Transform} from 'stream';
+import {Readable, Transform} from 'stream';
 import {createInflate} from 'zlib';
 import applyDelta from './apply-delta';
 import {GitObjectTypeID} from './types';
@@ -44,6 +44,46 @@ export interface Stores {
   readonly offsets?: Store<number, StoredEntry<'compressed'>>;
 }
 
+export class PackfileParserStreamV2 extends Readable {
+  constructor(input: Buffer, stores?: Stores) {
+    let moreRequestsPromise: Promise<void> | undefined;
+    let onMoreRequests: (() => void) | undefined;
+    parsePackfile(
+      input,
+      async (entry) => {
+        if (!this.push(entry)) {
+          // process.stdout.write(`🛑`);
+          if (!moreRequestsPromise) {
+            moreRequestsPromise = new Promise((resolve) => {
+              onMoreRequests = resolve;
+            });
+          }
+          await moreRequestsPromise;
+        }
+      },
+      stores,
+    ).then(
+      () => {
+        this.push(null);
+      },
+      (ex) => {
+        this.emit(`error`, ex);
+      },
+    );
+    super({
+      objectMode: true,
+      highWaterMark: 5,
+      read() {
+        if (onMoreRequests) {
+          // process.stdout.write(`✅`);
+          onMoreRequests();
+          moreRequestsPromise = undefined;
+          onMoreRequests = undefined;
+        }
+      },
+    });
+  }
+}
 export default class PackfileParserStream extends Transform {
   constructor(stores?: Stores) {
     const buffer: Buffer[] = [];
@@ -56,7 +96,9 @@ export default class PackfileParserStream extends Transform {
       flush(cb) {
         parsePackfile(
           Buffer.concat(buffer),
-          (entry) => this.push(entry),
+          async (entry) => {
+            this.push(entry);
+          },
           stores,
         ).then(
           () => cb(),
@@ -69,7 +111,7 @@ export default class PackfileParserStream extends Transform {
 
 export async function parsePackfile(
   data: Buffer,
-  push: (entry: any) => void,
+  push: (entry: any) => Promise<void>,
   {references = new Map(), offsets = new Map()}: Stores = {},
 ) {
   const buffer = createBuffer(data);
@@ -101,7 +143,7 @@ export async function parsePackfile(
         const delta = parseOffsetDelta();
         const {output: rawBody, compressed} = await parseBody(size);
         const referencedOffset = entryOffset - delta;
-        onEntry(
+        await onEntry(
           await resolveEntry({
             kind: StoredEntryKind.offset,
             referencedOffset,
@@ -116,7 +158,7 @@ export async function parsePackfile(
         // REF DELTA
         const ref = buffer.consumeBytes(20).toString('hex');
         const {output: rawBody, compressed} = await parseBody(size);
-        onEntry(
+        await onEntry(
           await resolveEntry({kind: StoredEntryKind.ref, ref, body: rawBody}),
           {kind: StoredEntryKind.ref, ref, body: compressed},
           entryOffset,
@@ -125,7 +167,7 @@ export async function parsePackfile(
       }
       default: {
         const {output: rawBody, compressed} = await parseBody(size);
-        onEntry(
+        await onEntry(
           {type, body: rawBody},
           {kind: StoredEntryKind.normal, type, body: compressed},
           entryOffset,
@@ -224,7 +266,7 @@ export async function parsePackfile(
         return {type: resolvedBase.type, body};
     }
   }
-  function onEntry(
+  async function onEntry(
     entry: {type: number; body: Buffer},
     storedEntry: StoredEntry<'compressed'>,
     offset: number,
@@ -236,7 +278,7 @@ export async function parsePackfile(
     references.set(hash, storedEntry);
     offsets.set(offset, storedEntry);
 
-    push({
+    await push({
       hash,
       type,
       body,
