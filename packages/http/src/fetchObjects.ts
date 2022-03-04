@@ -3,6 +3,7 @@ import {
   parseFetchResponse,
   FetchCommand,
   FetchResponseEntryObject,
+  FetchCommandOutputOptions,
 } from '@rollingversions/git-protocol';
 import {ContextWithServerCapabilities} from './Context';
 
@@ -16,7 +17,12 @@ export default async function fetchObjects<
 >(
   repoURL: URL,
   command: FetchCommand,
-  ctx: ContextWithServerCapabilities<THeaders>,
+  {
+    raw,
+    references,
+    offsets,
+    ...ctx
+  }: ContextWithServerCapabilities<THeaders> & FetchCommandOutputOptions,
 ) {
   const url = new URL(
     `${
@@ -56,5 +62,5 @@ export default async function fetchObjects<
       )}`,
     );
   }
-  return parseFetchResponse(response.body);
+  return parseFetchResponse(response.body, {raw, references, offsets});
 }

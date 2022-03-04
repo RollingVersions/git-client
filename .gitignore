@@ -97,3 +97,5 @@ package-entry-points.json
 
 secrets/
 packages/packfile/samples/output.pack
+
+temp/
