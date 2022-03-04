@@ -70,6 +70,7 @@ run(
     `--name`,
     `git-client`,
     `git-client`,
+    `time`,
     `node`,
     `scripts/test-parse.js`,
     process.argv.slice(2),

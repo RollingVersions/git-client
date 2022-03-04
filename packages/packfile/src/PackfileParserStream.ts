@@ -11,11 +11,37 @@ export interface Store<TKey, TValue> {
   get(key: TKey): TValue | undefined | Promise<TValue | undefined>;
   set(key: TKey, value: TValue): unknown;
 }
+
+export enum StoredEntryKind {
+  normal = 1,
+  ref = 2,
+  offset = 3,
+}
+export type StoredEntry<TMode extends 'compressed' | 'raw'> =
+  | {
+      readonly kind: StoredEntryKind.normal;
+      readonly type: number;
+      readonly body: Buffer;
+      readonly __mode?: TMode;
+    }
+  | {
+      readonly kind: StoredEntryKind.ref;
+      readonly ref: string;
+      readonly body: Buffer;
+      readonly __mode?: TMode;
+    }
+  | {
+      readonly kind: StoredEntryKind.offset;
+      readonly referencedOffset: number;
+      readonly body: Buffer;
+      readonly __mode?: TMode;
+    };
+
 export interface Stores {
   // Ideally you would provide a store that supports thinpack lookup
   // in addition to refs added via `.set`
-  readonly references?: Store<string, {type: number; body: Buffer}>;
-  readonly offsets?: Store<number, {type: number; body: Buffer}>;
+  readonly references?: Store<string, StoredEntry<'compressed'>>;
+  readonly offsets?: Store<number, StoredEntry<'compressed'>>;
 }
 
 export default class PackfileParserStream extends Transform {
@@ -73,36 +99,40 @@ export async function parsePackfile(
       case 6: {
         // OFFSET DELTA
         const delta = parseOffsetDelta();
-        const rawBody = await parseBody(size);
-        const base = await offsets.get(entryOffset - delta);
-        if (!base) {
-          throw new Error(
-            `Cannot find base of ofs-delta ${entryOffset} - ${delta}`,
-          );
-        }
-        const body = applyDelta(rawBody, base.body);
-        onEntry({type: base.type, body}, entryOffset);
+        const {output: rawBody, compressed} = await parseBody(size);
+        const referencedOffset = entryOffset - delta;
+        onEntry(
+          await resolveEntry({
+            kind: StoredEntryKind.offset,
+            referencedOffset,
+            body: rawBody,
+          }),
+          {kind: StoredEntryKind.offset, referencedOffset, body: compressed},
+          entryOffset,
+        );
         break;
       }
       case 7: {
         // REF DELTA
         const ref = buffer.consumeBytes(20).toString('hex');
-        const rawBody = await parseBody(size);
-        const base = await references.get(ref);
-        if (!base) {
-          throw new Error(`Cannot find base of ref ${ref}`);
-        }
-        const body = applyDelta(rawBody, base.body);
-        onEntry({type: base.type, body}, entryOffset);
+        const {output: rawBody, compressed} = await parseBody(size);
+        onEntry(
+          await resolveEntry({kind: StoredEntryKind.ref, ref, body: rawBody}),
+          {kind: StoredEntryKind.ref, ref, body: compressed},
+          entryOffset,
+        );
         break;
       }
       default: {
-        const rawBody = await parseBody(size);
-        onEntry({type, body: rawBody}, entryOffset);
+        const {output: rawBody, compressed} = await parseBody(size);
+        onEntry(
+          {type, body: rawBody},
+          {kind: StoredEntryKind.normal, type, body: compressed},
+          entryOffset,
+        );
         break;
       }
     }
-    // checkExpected();
   }
 
   const actualChecksum = createHash('sha1')
@@ -148,20 +178,63 @@ export async function parsePackfile(
 
   async function parseBody(expectedSize: number) {
     const {output, bytesWritten} = await inflateAsync(buffer.readRemaining());
-    buffer.consume(bytesWritten);
+    const compressed = buffer.consumeBytes(bytesWritten);
     if (output.length !== expectedSize) {
       throw new Error(`Size mismatch`);
     }
-    return output;
+    return {compressed, output};
   }
 
-  function onEntry(entry: {type: number; body: Buffer}, offset: number) {
+  async function resolveCompressedEntry(entry: StoredEntry<'compressed'>) {
+    // console.log(`resolveCompressedEntry ${StoredEntryKind[entry.kind]}`);
+    return await resolveEntry({
+      ...entry,
+      body: (await inflateAsync(entry.body)).output,
+      __mode: 'raw',
+    });
+  }
+  async function resolveEntry(
+    entry: StoredEntry<'raw'>,
+  ): Promise<{type: number; body: Buffer}> {
+    // console.log(`resolveEntry ${StoredEntryKind[entry.kind]}`);
+    switch (entry.kind) {
+      case StoredEntryKind.normal:
+        return {
+          type: entry.type,
+          body: entry.body,
+        };
+      case StoredEntryKind.ref: {
+        const base = await references.get(entry.ref);
+        if (!base) {
+          throw new Error(`Cannot find base of ref ${entry.ref}`);
+        }
+        const resolvedBase = await resolveCompressedEntry(base);
+        const body = applyDelta(entry.body, resolvedBase.body);
+        return {type: resolvedBase.type, body};
+      }
+      case StoredEntryKind.offset:
+        const base = await offsets.get(entry.referencedOffset);
+        if (!base) {
+          throw new Error(
+            `Cannot find base of offset delta ${entry.referencedOffset}`,
+          );
+        }
+        const resolvedBase = await resolveCompressedEntry(base);
+        const body = applyDelta(entry.body, resolvedBase.body);
+        return {type: resolvedBase.type, body};
+    }
+  }
+  function onEntry(
+    entry: {type: number; body: Buffer},
+    storedEntry: StoredEntry<'compressed'>,
+    offset: number,
+  ) {
     const type = GitObjectTypeID[entry.type] ?? `unknown`;
     const body = encodeRaw(type, entry.body);
     const hash = createHash('sha1').update(body).digest('hex');
 
-    references.set(hash, entry);
-    offsets.set(offset, entry);
+    references.set(hash, storedEntry);
+    offsets.set(offset, storedEntry);
 
     push({
       hash,
