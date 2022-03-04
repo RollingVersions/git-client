@@ -24,3 +24,5 @@ jobs:
       - run: yarn install --frozen-lockfile
       - run: yarn build
       - run: yarn test
+      - name: Check memory usage for packfile parser
+        run: node scripts/test-limited-memory-parse scripts/packfiles/nodejs-node.dat
