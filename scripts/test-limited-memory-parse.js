@@ -7,7 +7,9 @@ const {
   readdirSync,
 } = require('fs');
 
-rmdirSync(`temp`, {recursive: true, force: true});
+try {
+  rmdirSync(`temp`, {recursive: true, force: true});
+} catch (ex) {}
 mkdirSync(`temp`, {recursive: true});
 
 writeFileSync(`temp/package.json`, readFileSync(`package.json`));
