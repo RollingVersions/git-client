@@ -64,7 +64,7 @@ run(
   [
     `run`,
     `--rm`,
-    `-it`,
+    ...(process.env.CI ? [] : [`-it`]),
     `--memory`,
     `256mb`,
     `--memory-swap`,
