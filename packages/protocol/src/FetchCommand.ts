@@ -2,7 +2,7 @@ import {decode, Type} from '@rollingversions/git-core';
 import {
   PackfileParserStream,
   parsePackfile,
-  Stores,
+  PackfileParseOptions,
 } from '@rollingversions/git-packfile';
 import {
   isSpecialPacket,
@@ -14,13 +14,13 @@ import ObjectFilter, {objectFiltersToString} from './ObjectFilter';
 import Capabilities, {composeCapabilityList} from './CapabilityList';
 import {PassThrough, Readable, Transform, Writable} from 'stream';
 
-export interface FetchCommandOutputOptions extends Stores {
+export interface FetchCommandOutputOptions extends PackfileParseOptions {
   /**
    * Return the raw packfile, rather than parsed objects
    */
   raw?: boolean;
 }
-export interface FetchCommandOutputOptionsV2 extends Stores {
+export interface FetchCommandOutputOptionsV2 extends PackfileParseOptions {
   onProgress?: (progress: string) => void;
 }
 // Sample Request:
@@ -282,7 +282,7 @@ export class FetchResponseMetadataParser extends Transform {
 // using mergeAsyncIterator
 export function parseFetchResponse(
   response: NodeJS.ReadableStream,
-  {raw = false, ...stores}: FetchCommandOutputOptions = {},
+  {raw = false, ...options}: FetchCommandOutputOptions = {},
 ): Readable {
   const output = new PassThrough({objectMode: true});
   const rawResponse = response
@@ -296,7 +296,7 @@ export function parseFetchResponse(
     rawResponse.pipe(output);
   } else {
     rawResponse
-      .pipe(new PackfileParserStream(stores))
+      .pipe(new PackfileParserStream(options))
       .on('error', (err) => output.emit(`error`, err))
       .pipe(output);
   }
@@ -305,7 +305,7 @@ export function parseFetchResponse(
 
 export async function* parseFetchResponseV2(
   response: NodeJS.ReadableStream,
-  {onProgress, ...stores}: FetchCommandOutputOptionsV2 = {},
+  {onProgress, ...options}: FetchCommandOutputOptionsV2 = {},
 ) {
   const responseBuffer = await new Promise<Buffer>((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -332,7 +332,7 @@ export async function* parseFetchResponseV2(
       )
       .on('error', reject);
   });
-  for await (const entry of parsePackfile(responseBuffer, stores)) {
+  for await (const entry of parsePackfile(responseBuffer, options)) {
     yield entry;
   }
 }

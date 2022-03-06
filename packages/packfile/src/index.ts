@@ -6,4 +6,4 @@ export {
   default as PackfileParserStream,
   parsePackfile,
 } from './PackfileParserStream';
-export type {Store, Stores} from './PackfileParserStream';
+export type {Store, PackfileParseOptions} from './PackfileParserStream';

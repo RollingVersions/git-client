@@ -1,7 +1,9 @@
 const fs = require('fs');
+const {Transform} = require('stream');
+const ask = require('interrogator');
+const {startChain, param, parse} = require('parameter-reducers');
 const {PackfileParserStream} = require('../packages/packfile');
 const gitObj = require('../packages/objects');
-const {Transform} = require('stream');
 
 function startCheckingLiveness() {
   let lastPing = Date.now();
@@ -15,9 +17,22 @@ function startCheckingLiveness() {
   }, 30);
   return () => clearInterval(pinger);
 }
-const START = Date.now();
-async function parse() {
-  const filename = process.argv[2] ?? (await ask.input(`filename`));
+async function run() {
+  const {
+    storeMode = 'compressed',
+    filename = await ask.input(`filename`),
+  } = parse(
+    startChain()
+      .addParam(param.string(['--mode'], 'storeMode'))
+      .addParam(param.positionalString('filename')),
+    process.argv.slice(2),
+  ).extract();
+
+  if (!['raw', 'compressed'].includes(storeMode)) {
+    throw new Error(`Expected store mode to be raw or compressed`);
+  }
+
+  const START = Date.now();
   let count = 0;
   let i = 0;
   let j = 0;
@@ -27,7 +42,7 @@ async function parse() {
   await new Promise((resolve, reject) => {
     fs.createReadStream(filename)
       .on(`error`, reject)
-      .pipe(new PackfileParserStream())
+      .pipe(new PackfileParserStream({storeMode}))
       .on('error', reject)
       .pipe(
         new Transform({
@@ -71,7 +86,7 @@ async function parse() {
   console.warn(`Parsed ${count} entries`);
 }
 
-parse().catch((ex) => {
+run().catch((ex) => {
   console.error(`Request failed`);
   console.error(ex.stack);
   process.exit(1);

@@ -6,46 +6,125 @@ import {GitObjectType, GitObjectTypeID, GitRawObject} from './types';
 
 const INT32_BYTES = 4;
 
-export interface Store<TKey, TValue> {
-  get(key: TKey): TValue | undefined | Promise<TValue | undefined>;
-  set(key: TKey, value: TValue): unknown;
-}
-
 export enum StoredEntryKind {
   normal = 1,
   ref = 2,
   offset = 3,
 }
-export type StoredEntry<TMode extends 'compressed' | 'raw'> =
+
+export type EntryData =
+  | {
+      readonly kind: StoredEntryKind.normal;
+      readonly type: number;
+      readonly body: {compressed: Buffer; uncompressed: Buffer};
+    }
+  | {
+      readonly kind: StoredEntryKind.ref;
+      readonly ref: string;
+      readonly body: {compressed: Buffer; uncompressed: Buffer};
+    }
+  | {
+      readonly kind: StoredEntryKind.offset;
+      readonly referencedOffset: number;
+      readonly body: {compressed: Buffer; uncompressed: Buffer};
+    };
+
+export type StoredEntry =
   | {
       readonly kind: StoredEntryKind.normal;
       readonly type: number;
       readonly body: Buffer;
-      readonly __mode?: TMode;
     }
   | {
       readonly kind: StoredEntryKind.ref;
       readonly ref: string;
       readonly body: Buffer;
-      readonly __mode?: TMode;
     }
   | {
       readonly kind: StoredEntryKind.offset;
       readonly referencedOffset: number;
       readonly body: Buffer;
-      readonly __mode?: TMode;
     };
 
-export interface Stores {
-  // Ideally you would provide a store that supports thinpack lookup
-  // in addition to refs added via `.set`
-  readonly references?: Store<string, StoredEntry<'compressed'>>;
-  readonly offsets?: Store<number, StoredEntry<'compressed'>>;
+export interface Store {
+  write(ref: string, offset: number, entry: StoredEntry): void | Promise<void>;
+  getRef(
+    ref: string,
+  ): Promise<StoredEntry | undefined> | StoredEntry | undefined;
+  getOffset(
+    offset: number,
+  ): Promise<StoredEntry | undefined> | StoredEntry | undefined;
 }
 
+class MemoryStore implements Store {
+  private readonly _refs = new Map<string, StoredEntry>();
+  private readonly _offsets = new Map<number, StoredEntry>();
+  write(ref: string, offset: number, entry: StoredEntry) {
+    this._refs.set(ref, entry);
+    this._offsets.set(offset, entry);
+  }
+  getRef(ref: string) {
+    return this._refs.get(ref);
+  }
+  getOffset(offset: number) {
+    return this._offsets.get(offset);
+  }
+}
+
+interface WrappedStore {
+  write(ref: string, offset: number, entry: EntryData): Promise<void>;
+  getRef(ref: string): Promise<StoredEntry | undefined>;
+  getOffset(offset: number): Promise<StoredEntry | undefined>;
+}
+function wrapStore(store: Store, mode: 'compressed' | 'raw'): WrappedStore {
+  switch (mode) {
+    case 'compressed':
+      return {
+        async write(ref: string, offset: number, entry: EntryData) {
+          await store.write(ref, offset, {
+            ...entry,
+            body: entry.body.compressed,
+          });
+        },
+        async getRef(ref: string) {
+          const result = await store.getRef(ref);
+          return result
+            ? {...result, body: await inflateBufferAsync(result.body)}
+            : undefined;
+        },
+        async getOffset(offset: number) {
+          const result = await store.getOffset(offset);
+          return result
+            ? {...result, body: await inflateBufferAsync(result.body)}
+            : undefined;
+        },
+      };
+    case 'raw':
+      return {
+        async write(ref: string, offset: number, entry: EntryData) {
+          await store.write(ref, offset, {
+            ...entry,
+            body: entry.body.uncompressed,
+          });
+        },
+        async getRef(ref: string) {
+          return await store.getRef(ref);
+        },
+        async getOffset(offset: number) {
+          return await store.getOffset(offset);
+        },
+      };
+    default:
+      return assertNever(mode);
+  }
+}
+export interface PackfileParseOptions {
+  store?: Store;
+  storeMode?: 'compressed' | 'raw';
+}
 const noop = () => {};
 export default class PackfileParserStream extends Duplex {
-  constructor(stores?: Stores) {
+  constructor(options?: PackfileParseOptions) {
     const buffer: Buffer[] = [];
 
     let onRead = noop;
@@ -63,7 +142,7 @@ export default class PackfileParserStream extends Duplex {
       final(cb) {
         (async () => {
           const input = Buffer.concat(buffer);
-          for await (const entry of parsePackfile(input, stores)) {
+          for await (const entry of parsePackfile(input, options)) {
             if (!this.push(entry)) {
               // process.stdout.write(`🛑`);
 
@@ -87,8 +166,13 @@ export default class PackfileParserStream extends Duplex {
 
 export async function* parsePackfile(
   data: Buffer,
-  {references = new Map(), offsets = new Map()}: Stores = {},
+  options?: PackfileParseOptions,
 ): AsyncGenerator<GitRawObject, void, unknown> {
+  const store = wrapStore(
+    options?.store ?? new MemoryStore(),
+    options?.storeMode ?? 'compressed',
+  );
+
   const buffer = createConsumableBuffer(data);
 
   // The first four bytes in a packfile are the bytes 'PACK'
@@ -116,15 +200,10 @@ export async function* parsePackfile(
       case 6: {
         // OFFSET DELTA
         const delta = parseOffsetDelta();
-        const {output: rawBody, compressed} = await parseBody(size);
+        const body = await parseBody(size);
         const referencedOffset = entryOffset - delta;
         yield onEntry(
-          await resolveEntry({
-            kind: StoredEntryKind.offset,
-            referencedOffset,
-            body: rawBody,
-          }),
-          {kind: StoredEntryKind.offset, referencedOffset, body: compressed},
+          {kind: StoredEntryKind.offset, referencedOffset, body},
           entryOffset,
         );
         break;
@@ -132,21 +211,13 @@ export async function* parsePackfile(
       case 7: {
         // REF DELTA
         const ref = buffer.consumeBytes(20).toString('hex');
-        const {output: rawBody, compressed} = await parseBody(size);
-        yield onEntry(
-          await resolveEntry({kind: StoredEntryKind.ref, ref, body: rawBody}),
-          {kind: StoredEntryKind.ref, ref, body: compressed},
-          entryOffset,
-        );
+        const body = await parseBody(size);
+        yield onEntry({kind: StoredEntryKind.ref, ref, body}, entryOffset);
         break;
       }
       default: {
-        const {output: rawBody, compressed} = await parseBody(size);
-        yield onEntry(
-          {type, body: rawBody},
-          {kind: StoredEntryKind.normal, type, body: compressed},
-          entryOffset,
-        );
+        const body = await parseBody(size);
+        yield onEntry({kind: StoredEntryKind.normal, type, body}, entryOffset);
         break;
       }
     }
@@ -201,18 +272,11 @@ export async function* parsePackfile(
     if (output.length !== expectedSize) {
       throw new Error(`Size mismatch`);
     }
-    return {compressed, output};
+    return {compressed, uncompressed: output};
   }
 
-  async function resolveCompressedEntry(entry: StoredEntry<'compressed'>) {
-    return await resolveEntry({
-      ...entry,
-      body: await inflateBufferAsync(entry.body),
-      __mode: 'raw',
-    });
-  }
   async function resolveEntry(
-    entry: StoredEntry<'raw'>,
+    entry: StoredEntry,
   ): Promise<{type: number; body: Buffer}> {
     switch (entry.kind) {
       case StoredEntryKind.normal:
@@ -221,31 +285,37 @@ export async function* parsePackfile(
           body: entry.body,
         };
       case StoredEntryKind.ref: {
-        const base = await references.get(entry.ref);
+        const base = await store.getRef(entry.ref);
         if (!base) {
           throw new Error(`Cannot find base of ref ${entry.ref}`);
         }
-        const resolvedBase = await resolveCompressedEntry(base);
+        const resolvedBase = await resolveEntry(base);
         const body = applyDelta(entry.body, resolvedBase.body);
         return {type: resolvedBase.type, body};
       }
       case StoredEntryKind.offset:
-        const base = await offsets.get(entry.referencedOffset);
+        const base = await store.getOffset(entry.referencedOffset);
         if (!base) {
           throw new Error(
             `Cannot find base of offset delta ${entry.referencedOffset}`,
           );
         }
-        const resolvedBase = await resolveCompressedEntry(base);
+        const resolvedBase = await resolveEntry(base);
         const body = applyDelta(entry.body, resolvedBase.body);
         return {type: resolvedBase.type, body};
+      default:
+        return assertNever(entry);
     }
   }
-  function onEntry(
-    entry: {type: number; body: Buffer},
-    storedEntry: StoredEntry<'compressed'>,
+  async function onEntry(
+    entryData: EntryData,
     offset: number,
-  ): GitRawObject {
+  ): Promise<GitRawObject> {
+    const entry = await resolveEntry({
+      ...entryData,
+      body: entryData.body.uncompressed,
+    });
+
     const type = (GitObjectTypeID[entry.type] ?? `unknown`) as GitObjectType;
     const body = Buffer.concat([
       Buffer.from(`${type} ${entry.body.length}\0`, `utf8`),
@@ -253,8 +323,7 @@ export async function* parsePackfile(
     ]);
     const hash = createHash('sha1').update(body).digest('hex');
 
-    references.set(hash, storedEntry);
-    offsets.set(offset, storedEntry);
+    store.write(hash, offset, entryData);
 
     return {
       hash,
@@ -346,4 +415,8 @@ async function inflateBufferAsync(buffer: Buffer) {
       else resolve(result);
     });
   });
+}
+
+function assertNever(value: never): never {
+  throw new Error(`Unexpected value: ${JSON.stringify(value)}`);
 }

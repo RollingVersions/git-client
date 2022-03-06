@@ -3711,6 +3711,11 @@ p-try@^2.0.0:
   resolved "https://registry.yarnpkg.com/p-try/-/p-try-2.2.0.tgz#cb2868540e313d61de58fafbe35ce9004d5540e6"
   integrity sha512-R4nPAVTAU0B9D35/Gk3uJf/7XYbQcyohSKdvAxIRSNghFl4e71hVoGnBNQz9cWaXxO2I10KTC+3jMdvvoKw6dQ==
 
+parameter-reducers@^2.0.0:
+  version "2.0.0"
+  resolved "https://registry.yarnpkg.com/parameter-reducers/-/parameter-reducers-2.0.0.tgz#504a3e5c157bddd7bf8ae53dbc5bf3f40c1edf9a"
+  integrity sha512-9uA0EXkGfAIGge9dY8/ZLSWa/nLnEKyIIIjYTQhP8wMMURFgOevLToJJ8NFK4ltXz73D+wBTLObixi/P9HABNw==
+
 parent-module@^1.0.0:
   version "1.0.1"
   resolved "https://registry.yarnpkg.com/parent-module/-/parent-module-1.0.1.tgz#691d2709e78c79fae3a156622452d00762caaaa2"

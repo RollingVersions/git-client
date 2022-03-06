@@ -21,8 +21,8 @@ export default async function fetchObjects<
   command: FetchCommand,
   {
     raw,
-    references,
-    offsets,
+    store,
+    storeMode,
     ...ctx
   }: ContextWithServerCapabilities<THeaders> & FetchCommandOutputOptions,
 ) {
@@ -64,7 +64,7 @@ export default async function fetchObjects<
       )}`,
     );
   }
-  return parseFetchResponse(response.body, {raw, references, offsets});
+  return parseFetchResponse(response.body, {raw, store, storeMode});
 }
 
 export async function* fetchObjectsV2<
@@ -74,8 +74,8 @@ export async function* fetchObjectsV2<
   command: FetchCommand,
   {
     onProgress,
-    references,
-    offsets,
+    store,
+    storeMode,
     ...ctx
   }: ContextWithServerCapabilities<THeaders> & FetchCommandOutputOptionsV2,
 ) {
@@ -119,8 +119,8 @@ export async function* fetchObjectsV2<
   }
   for await (const entry of parseFetchResponseV2(response.body, {
     onProgress,
-    references,
-    offsets,
+    store,
+    storeMode,
   })) {
     yield entry;
   }
