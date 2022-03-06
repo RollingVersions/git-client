@@ -1,7 +1,7 @@
 import HttpDefault from './createHttpHandler';
 import initialRequest from './initialRequest';
 import lsRefs from './lsRefs';
-import fetchObjects from './fetchObjects';
+import fetchObjects, {fetchObjectsV2} from './fetchObjects';
 
 export type {
   default as Context,
@@ -21,4 +21,4 @@ export {blobNone, blobLimit, treeDepth} from '@rollingversions/git-protocol';
 
 export {initialRequest};
 export {lsRefs};
-export {fetchObjects};
+export {fetchObjects, fetchObjectsV2};
