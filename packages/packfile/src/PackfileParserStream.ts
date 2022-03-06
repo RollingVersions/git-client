@@ -44,42 +44,32 @@ export interface Stores {
   readonly offsets?: Store<number, StoredEntry<'compressed'>>;
 }
 
+const noop = () => {};
 export class PackfileParserStreamV2 extends Readable {
   constructor(input: Buffer, stores?: Stores) {
-    let moreRequestsPromise: Promise<void> | undefined;
-    let onMoreRequests: (() => void) | undefined;
-    parsePackfile(
-      input,
-      async (entry) => {
-        if (!this.push(entry)) {
-          // process.stdout.write(`🛑`);
-          if (!moreRequestsPromise) {
-            moreRequestsPromise = new Promise((resolve) => {
-              onMoreRequests = resolve;
-            });
+    let onRead = () => {
+      onRead = noop;
+      (async () => {
+        for await (const entry of parsePackfile(input, stores)) {
+          if (!this.push(entry)) {
+            // process.stdout.write(`🛑`);
+
+            await new Promise<void>((resolve) => (onRead = resolve));
+            onRead = noop;
+
+            // process.stdout.write(`✅`);
           }
-          await moreRequestsPromise;
         }
-      },
-      stores,
-    ).then(
-      () => {
         this.push(null);
-      },
-      (ex) => {
+      })().catch((ex) => {
         this.emit(`error`, ex);
-      },
-    );
+      });
+    };
     super({
       objectMode: true,
       highWaterMark: 5,
       read() {
-        if (onMoreRequests) {
-          // process.stdout.write(`✅`);
-          onMoreRequests();
-          moreRequestsPromise = undefined;
-          onMoreRequests = undefined;
-        }
+        onRead();
       },
     });
   }
@@ -87,6 +77,11 @@ export class PackfileParserStreamV2 extends Readable {
 export default class PackfileParserStream extends Transform {
   constructor(stores?: Stores) {
     const buffer: Buffer[] = [];
+    const pullEntries = async (buffer: Buffer) => {
+      for await (const entry of parsePackfile(buffer, stores)) {
+        this.push(entry);
+      }
+    };
     super({
       readableObjectMode: true,
       transform(chunk, _, cb) {
@@ -94,13 +89,7 @@ export default class PackfileParserStream extends Transform {
         cb();
       },
       flush(cb) {
-        parsePackfile(
-          Buffer.concat(buffer),
-          async (entry) => {
-            this.push(entry);
-          },
-          stores,
-        ).then(
+        pullEntries(Buffer.concat(buffer)).then(
           () => cb(),
           (err) => cb(err),
         );
@@ -109,12 +98,11 @@ export default class PackfileParserStream extends Transform {
   }
 }
 
-export async function parsePackfile(
+export async function* parsePackfile(
   data: Buffer,
-  push: (entry: any) => Promise<void>,
   {references = new Map(), offsets = new Map()}: Stores = {},
 ) {
-  const buffer = createBuffer(data);
+  const buffer = createConsumableBuffer(data);
 
   // The first four bytes in a packfile are the bytes 'PACK'
   const packfileHeader = buffer.consumeUInt32BE();
@@ -143,7 +131,7 @@ export async function parsePackfile(
         const delta = parseOffsetDelta();
         const {output: rawBody, compressed} = await parseBody(size);
         const referencedOffset = entryOffset - delta;
-        await onEntry(
+        yield onEntry(
           await resolveEntry({
             kind: StoredEntryKind.offset,
             referencedOffset,
@@ -158,7 +146,7 @@ export async function parsePackfile(
         // REF DELTA
         const ref = buffer.consumeBytes(20).toString('hex');
         const {output: rawBody, compressed} = await parseBody(size);
-        await onEntry(
+        yield onEntry(
           await resolveEntry({kind: StoredEntryKind.ref, ref, body: rawBody}),
           {kind: StoredEntryKind.ref, ref, body: compressed},
           entryOffset,
@@ -167,7 +155,7 @@ export async function parsePackfile(
       }
       default: {
         const {output: rawBody, compressed} = await parseBody(size);
-        await onEntry(
+        yield onEntry(
           {type, body: rawBody},
           {kind: StoredEntryKind.normal, type, body: compressed},
           entryOffset,
@@ -266,7 +254,7 @@ export async function parsePackfile(
         return {type: resolvedBase.type, body};
     }
   }
-  async function onEntry(
+  function onEntry(
     entry: {type: number; body: Buffer},
     storedEntry: StoredEntry<'compressed'>,
     offset: number,
@@ -278,11 +266,11 @@ export async function parsePackfile(
     references.set(hash, storedEntry);
     offsets.set(offset, storedEntry);
 
-    await push({
+    return {
       hash,
       type,
       body,
-    });
+    };
   }
 }
 
@@ -290,7 +278,7 @@ function encodeRaw(type: string, bytes: Uint8Array) {
   return concat(encode(`${type} ${bytes.length}\0`), bytes);
 }
 
-function createBuffer(buffer: Buffer) {
+function createConsumableBuffer(buffer: Buffer) {
   let bufferOffset = 0;
 
   function getLength() {
@@ -301,29 +289,17 @@ function createBuffer(buffer: Buffer) {
   }
 
   function consumeByte() {
-    if (bufferOffset >= buffer.length) {
-      throw new Error(`Unexpected end of input`);
-    }
-    const result = buffer[bufferOffset];
-    consume(1);
-    return result;
+    return readAndConsume(1, () => buffer[bufferOffset]);
   }
 
   function consumeUInt32BE(): number {
-    if (bufferOffset + INT32_BYTES > buffer.length) {
-      throw new Error(`Unexpected end of input`);
-    }
-
-    const result = buffer.readUInt32BE(bufferOffset);
-
-    consume(INT32_BYTES);
-    return result;
+    return readAndConsume(INT32_BYTES, () => buffer.readUInt32BE(bufferOffset));
   }
 
   function consumeBytes(bytes: number): Buffer {
-    const result = buffer.slice(bufferOffset, bufferOffset + bytes);
-    consume(bytes);
-    return result;
+    return readAndConsume(bytes, () =>
+      buffer.slice(bufferOffset, bufferOffset + bytes),
+    );
   }
 
   function readConsumed(): Buffer {
@@ -334,12 +310,17 @@ function createBuffer(buffer: Buffer) {
   }
 
   function consume(bytes: number) {
+    readAndConsume(bytes, () => undefined);
+  }
+  function readAndConsume<T>(bytes: number, read: () => T): T {
     if (bufferOffset + bytes > buffer.length) {
       throw new Error(
         `There are not enough bytes in the buffer to consume ${bytes} bytes.`,
       );
     }
+    const result = read();
     bufferOffset += bytes;
+    return result;
   }
 
   return {
