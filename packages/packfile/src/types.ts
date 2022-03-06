@@ -22,5 +22,5 @@ export interface PackfileEntry {
 export interface GitRawObject {
   readonly type: GitObjectType;
   readonly hash: string;
-  readonly body: Uint8Array;
+  readonly body: Buffer;
 }

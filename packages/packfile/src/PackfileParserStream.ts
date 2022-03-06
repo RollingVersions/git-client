@@ -1,4 +1,3 @@
-import {concat, encode} from '@rollingversions/git-core';
 import {createHash} from 'crypto';
 import {Duplex} from 'stream';
 import {createInflate, inflate} from 'zlib';
@@ -248,7 +247,10 @@ export async function* parsePackfile(
     offset: number,
   ): GitRawObject {
     const type = (GitObjectTypeID[entry.type] ?? `unknown`) as GitObjectType;
-    const body = encodeRaw(type, entry.body);
+    const body = Buffer.concat([
+      Buffer.from(`${type} ${entry.body.length}\0`, `utf8`),
+      entry.body,
+    ]);
     const hash = createHash('sha1').update(body).digest('hex');
 
     references.set(hash, storedEntry);
@@ -262,15 +264,14 @@ export async function* parsePackfile(
   }
 }
 
-function encodeRaw(type: string, bytes: Uint8Array) {
-  return concat(encode(`${type} ${bytes.length}\0`), bytes);
-}
-
 function createConsumableBuffer(buffer: Buffer) {
   let bufferOffset = 0;
 
   function getLength() {
     return buffer.length - bufferOffset;
+  }
+  function getOffset() {
+    return bufferOffset;
   }
 
   function consumeByte() {
@@ -310,6 +311,7 @@ function createConsumableBuffer(buffer: Buffer) {
 
   return {
     getLength,
+    getOffset,
     readConsumed,
     readRemaining,
     consumeByte,
