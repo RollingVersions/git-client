@@ -1,6 +1,6 @@
 import {concat, encode} from '@rollingversions/git-core';
 import {createHash} from 'crypto';
-import {Readable, Transform} from 'stream';
+import {Duplex} from 'stream';
 import {createInflate} from 'zlib';
 import applyDelta from './apply-delta';
 import {GitObjectTypeID} from './types';
@@ -45,53 +45,40 @@ export interface Stores {
 }
 
 const noop = () => {};
-export class PackfileParserStreamV2 extends Readable {
-  constructor(input: Buffer, stores?: Stores) {
-    let onRead = () => {
-      onRead = noop;
-      (async () => {
-        for await (const entry of parsePackfile(input, stores)) {
-          if (!this.push(entry)) {
-            // process.stdout.write(`🛑`);
+export default class PackfileParserStream extends Duplex {
+  constructor(stores?: Stores) {
+    const buffer: Buffer[] = [];
 
-            await new Promise<void>((resolve) => (onRead = resolve));
-            onRead = noop;
-
-            // process.stdout.write(`✅`);
-          }
-        }
-        this.push(null);
-      })().catch((ex) => {
-        this.emit(`error`, ex);
-      });
-    };
+    let onRead = noop;
     super({
-      objectMode: true,
-      highWaterMark: 5,
+      readableObjectMode: true,
+      writableHighWaterMark: 128 * 1024 * 1024,
+      readableHighWaterMark: 2,
       read() {
         onRead();
       },
-    });
-  }
-}
-export default class PackfileParserStream extends Transform {
-  constructor(stores?: Stores) {
-    const buffer: Buffer[] = [];
-    const pullEntries = async (buffer: Buffer) => {
-      for await (const entry of parsePackfile(buffer, stores)) {
-        this.push(entry);
-      }
-    };
-    super({
-      readableObjectMode: true,
-      transform(chunk, _, cb) {
+      write(chunk, _, cb) {
         buffer.push(chunk);
         cb();
       },
-      flush(cb) {
-        pullEntries(Buffer.concat(buffer)).then(
+      final(cb) {
+        (async () => {
+          const input = Buffer.concat(buffer);
+          for await (const entry of parsePackfile(input, stores)) {
+            if (!this.push(entry)) {
+              process.stdout.write(`🛑`);
+
+              await new Promise<void>((resolve) => (onRead = resolve));
+              onRead = noop;
+
+              process.stdout.write(`✅`);
+            }
+          }
+        })().then(
           () => cb(),
-          (err) => cb(err),
+          (ex) => {
+            cb(ex);
+          },
         );
       },
     });
