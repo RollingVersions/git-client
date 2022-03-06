@@ -11,8 +11,8 @@ function startCheckingLiveness() {
     const now = Date.now();
     const delay = now - lastPing - 30;
     lastPing = now;
-    if (delay > 30) {
-      process.stdout.write(`🚨${delay}`);
+    if (delay > 200) {
+      process.stdout.write(`\n\n🚨 CPU locked for at least ${delay}ms\n\n`);
     }
   }, 30);
   return () => clearInterval(pinger);
