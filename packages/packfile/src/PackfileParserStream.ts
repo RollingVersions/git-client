@@ -1,393 +1,428 @@
-import {concat, encode} from '@rollingversions/git-core';
-import {createHash, Hash} from 'crypto';
-import {Transform} from 'stream';
-import {createInflate} from 'zlib';
+import {createHash} from 'crypto';
+import {Duplex} from 'stream';
+import {createInflate, inflate} from 'zlib';
 import applyDelta from './apply-delta';
-import {PackfileEntry, GitObjectTypeID} from './types';
+import {GitObjectType, GitObjectTypeID, GitRawObject} from './types';
 
-type State = (chunk: Buffer | null) => Promise<State>;
+const INT32_BYTES = 4;
 
-interface BaseContext {
-  readonly digest: Hash;
-  readonly references: Store<string, PackfileEntry>;
-  readonly offsets: Store<number, PackfileEntry>;
-  readonly onEntry: (entry: PackfileEntry) => void;
-}
-interface HeaderContext extends BaseContext {
-  readonly version: 2 | 3;
-  readonly entriesCount: number;
-  readonly entryIndex: number;
-  readonly offset: number;
+export enum StoredEntryKind {
+  normal = 1,
+  ref = 2,
+  offset = 3,
 }
 
-interface BodyContext extends HeaderContext {
-  readonly entryOffset: number;
-  readonly size: number;
+export type EntryData =
+  | {
+      readonly kind: StoredEntryKind.normal;
+      readonly type: number;
+      readonly body: {compressed: Buffer; uncompressed: Buffer};
+    }
+  | {
+      readonly kind: StoredEntryKind.ref;
+      readonly ref: string;
+      readonly body: {compressed: Buffer; uncompressed: Buffer};
+    }
+  | {
+      readonly kind: StoredEntryKind.offset;
+      readonly referencedOffset: number;
+      readonly body: {compressed: Buffer; uncompressed: Buffer};
+    };
+
+export type StoredEntry =
+  | {
+      readonly kind: StoredEntryKind.normal;
+      readonly type: number;
+      readonly body: Buffer;
+    }
+  | {
+      readonly kind: StoredEntryKind.ref;
+      readonly ref: string;
+      readonly body: Buffer;
+    }
+  | {
+      readonly kind: StoredEntryKind.offset;
+      readonly referencedOffset: number;
+      readonly body: Buffer;
+    };
+
+export interface Store {
+  write(ref: string, offset: number, entry: StoredEntry): void | Promise<void>;
+  getRef(
+    ref: string,
+  ): Promise<StoredEntry | undefined> | StoredEntry | undefined;
+  getOffset(
+    offset: number,
+  ): Promise<StoredEntry | undefined> | StoredEntry | undefined;
 }
 
-export interface Store<TKey, TValue> {
-  get(key: TKey): TValue | undefined | Promise<TValue | undefined>;
-  set(key: TKey, value: TValue): unknown;
-}
-export interface Stores {
-  // Ideally you would provide a store that supports thinpack lookup
-  // in addition to refs added via `.set`
-  readonly references?: Store<string, PackfileEntry>;
-  readonly offsets?: Store<number, PackfileEntry>;
+class MemoryStore implements Store {
+  private readonly _refs = new Map<string, StoredEntry>();
+  private readonly _offsets = new Map<number, StoredEntry>();
+  write(ref: string, offset: number, entry: StoredEntry) {
+    this._refs.set(ref, entry);
+    this._offsets.set(offset, entry);
+  }
+  getRef(ref: string) {
+    return this._refs.get(ref);
+  }
+  getOffset(offset: number) {
+    return this._offsets.get(offset);
+  }
 }
 
-export default class PackfileParserStream extends Transform {
-  constructor({references = new Map(), offsets = new Map()}: Stores = {}) {
-    let state: Promise<State> | undefined;
+interface WrappedStore {
+  write(ref: string, offset: number, entry: EntryData): Promise<void>;
+  getRef(ref: string): Promise<StoredEntry | undefined>;
+  getOffset(offset: number): Promise<StoredEntry | undefined>;
+}
+function wrapStore(store: Store, mode: 'compressed' | 'raw'): WrappedStore {
+  switch (mode) {
+    case 'compressed':
+      return {
+        async write(ref: string, offset: number, entry: EntryData) {
+          await store.write(ref, offset, {
+            ...entry,
+            body: entry.body.compressed,
+          });
+        },
+        async getRef(ref: string) {
+          const result = await store.getRef(ref);
+          return result
+            ? {...result, body: await inflateBufferAsync(result.body)}
+            : undefined;
+        },
+        async getOffset(offset: number) {
+          const result = await store.getOffset(offset);
+          return result
+            ? {...result, body: await inflateBufferAsync(result.body)}
+            : undefined;
+        },
+      };
+    case 'raw':
+      return {
+        async write(ref: string, offset: number, entry: EntryData) {
+          await store.write(ref, offset, {
+            ...entry,
+            body: entry.body.uncompressed,
+          });
+        },
+        async getRef(ref: string) {
+          return await store.getRef(ref);
+        },
+        async getOffset(offset: number) {
+          return await store.getOffset(offset);
+        },
+      };
+    default:
+      return assertNever(mode);
+  }
+}
+export interface PackfileParseOptions {
+  store?: Store;
+  storeMode?: 'compressed' | 'raw';
+}
+const noop = () => {};
+export default class PackfileParserStream extends Duplex {
+  constructor(options?: PackfileParseOptions) {
+    const buffer: Buffer[] = [];
+
+    let onRead = noop;
     super({
       readableObjectMode: true,
-      transform(chunk, _, callback) {
-        state = state
-          ? state.then((s) => s(chunk))
-          : parseStart(chunk, {
-              references,
-              offsets,
-              digest: createHash('sha1'),
-              onEntry: (entry) => {
-                const type = GitObjectTypeID[entry.type] ?? `unknown`;
-                const body = encodeRaw(type, entry.body);
-                const hash = createHash('sha1').update(body).digest('hex');
+      writableHighWaterMark: 128 * 1024 * 1024,
+      readableHighWaterMark: 2,
+      read() {
+        onRead();
+      },
+      write(chunk, _, cb) {
+        buffer.push(chunk);
+        cb();
+      },
+      final(cb) {
+        (async () => {
+          const input = Buffer.concat(buffer);
+          for await (const entry of parsePackfile(input, options)) {
+            if (!this.push(entry)) {
+              // process.stdout.write(`🛑`);
 
-                references.set(hash, entry);
-                offsets.set(entry.offset, entry);
+              await new Promise<void>((resolve) => (onRead = resolve));
+              onRead = noop;
 
-                this.push({
-                  hash,
-                  type,
-                  body,
-                });
-              },
-            });
-        state.then(
-          () => {
-            callback(null);
-          },
-          (err) => {
-            callback(err);
+              // process.stdout.write(`✅`);
+            }
+          }
+          this.push(null);
+        })().then(
+          () => cb(),
+          (ex) => {
+            cb(ex);
           },
         );
-      },
-      flush(callback) {
-        if (state) {
-          state
-            .then((s) => s(null))
-            .then(
-              () => callback(null),
-              (err) => callback(err),
-            );
-        } else {
-          callback(new Error(`Unexpected end of stream`));
-        }
       },
     });
   }
 }
 
-// The first four bytes in a packfile are the bytes 'PACK'
+export async function* parsePackfile(
+  data: Buffer,
+  options?: PackfileParseOptions,
+): AsyncGenerator<GitRawObject, void, unknown> {
+  const store = wrapStore(
+    options?.store ?? new MemoryStore(),
+    options?.storeMode ?? 'compressed',
+  );
 
-// The version is stored as an unsigned 32 integer in network byte order.
-// It must be version 2 or 3.
+  const buffer = createConsumableBuffer(data);
 
-// The number of objects in this packfile is also stored as an unsigned 32 bit int.
-const HEADER_LENGTH = 4 * 3;
-async function parseStart(chunk: Buffer, ctx: BaseContext): Promise<State> {
-  if (chunk.length < HEADER_LENGTH) {
-    return await waitForMore(
-      chunk,
-      async (chunk) => await parseStart(chunk, ctx),
-    );
-  }
-
-  const packfileHeader = chunk.readUInt32BE(0);
+  // The first four bytes in a packfile are the bytes 'PACK'
+  const packfileHeader = buffer.consumeUInt32BE();
   if (packfileHeader !== 0x5041434b) {
     throw new Error(
       'Invalid packfile header, packfiles should start with "PACK"',
     );
   }
 
-  const version = chunk.readUInt32BE(4);
+  // The version is stored as an unsigned 32 integer in network byte order.
+  // It must be version 2 or 3.
+  const version = buffer.consumeUInt32BE();
   if (version !== 2 && version !== 3) {
     throw new Error('Invalid version number ' + version + ', expected 2 or 3');
   }
 
-  const entriesCount = chunk.readUInt32BE(8);
+  // The number of objects in this packfile is also stored as an unsigned 32 bit int.
+  const entriesCount = buffer.consumeUInt32BE();
 
-  ctx.digest.update(chunk.slice(0, HEADER_LENGTH));
-  return await parseHeader(chunk.slice(HEADER_LENGTH), {
-    ...ctx,
-    version,
-    entriesCount,
-    entryIndex: 0,
-    offset: HEADER_LENGTH,
-  });
-}
-
-// n-byte type and length (3-bit type, (n-1)*7+4-bit length)
-// CTTTSSSS
-// C is continue bit, TTT is type, S+ is length
-// Second state in the same header parsing.
-// CSSSSSSS*
-async function parseHeader(chunk: Buffer, ctx: HeaderContext): Promise<State> {
-  if (ctx.entryIndex >= ctx.entriesCount) {
-    return await parseChecksum(chunk, ctx);
-  }
-  if (!chunk.length) {
-    return await waitForMore(
-      chunk,
-      async (chunk) => await parseHeader(chunk, ctx),
-    );
-  }
-
-  let offset = ctx.offset;
-  const entryOffset = ctx.offset;
-  let byte = chunk[0];
-  const type = (byte >> 4) & 0x7;
-  let size = byte & 0xf;
-  let left = 4;
-
-  offset++;
-  ctx.digest.update(chunk.slice(0, 1));
-  return parseChunk(chunk.slice(1));
-  async function parseChunk(chunk: Buffer | null): Promise<State> {
-    if (!chunk) {
-      throw new Error(`Unexpected end of stream`);
-    }
-    let i = 0;
-    while (byte & 0x80) {
-      if (i >= chunk.length) {
-        ctx.digest.update(chunk);
-        return parseChunk;
-      }
-      offset++;
-      byte = chunk[i++];
-      size |= (byte & 0x7f) << left;
-      left += 7;
-    }
-    ctx.digest.update(chunk.slice(0, i));
-    return await end(chunk.slice(i));
-  }
-  async function end(remaining: Buffer): Promise<State> {
+  for (let entryIndex = 0; entryIndex < entriesCount; entryIndex++) {
+    const entryOffset = buffer.getOffset();
+    const {type, size} = parseHeader();
     switch (type) {
-      case 6:
-        return await ofsDelta(remaining, {
-          ...ctx,
+      case 6: {
+        // OFFSET DELTA
+        const delta = parseOffsetDelta();
+        const body = await parseBody(size);
+        const referencedOffset = entryOffset - delta;
+        yield await onEntry(
+          {kind: StoredEntryKind.offset, referencedOffset, body},
           entryOffset,
-          offset,
-          size,
-        });
-      case 7:
-        return await refDelta(remaining, {
-          ...ctx,
-          entryOffset,
-          offset,
-          size,
-        });
-      default:
-        return await parseBody(
-          remaining,
-          {
-            ...ctx,
-            entryOffset,
-            offset,
-            size,
-          },
-          async (body) => {
-            ctx.onEntry({type, body, offset: entryOffset});
-          },
         );
-    }
-  }
-}
-
-// Big-endian modified base 128 number encoded ref offset
-async function ofsDelta(chunk: Buffer, ctx: BodyContext): Promise<State> {
-  if (!chunk.length)
-    return await waitForMore(
-      chunk,
-      async (buffer) => await ofsDelta(buffer, ctx),
-    );
-
-  let offset = ctx.offset;
-  let byte = chunk[0];
-  let ref = byte & 0x7f;
-
-  offset++;
-  ctx.digest.update(chunk.slice(0, 1));
-  return parseChunk(chunk.slice(1));
-  async function parseChunk(chunk: Buffer | null): Promise<State> {
-    if (!chunk) {
-      throw new Error(`Unexpected end of stream`);
-    }
-    let i = 0;
-    while (byte & 0x80) {
-      if (i >= chunk.length) {
-        ctx.digest.update(chunk);
-        return parseChunk;
+        break;
       }
-      offset++;
-      byte = chunk[i++];
-      ref = ((ref + 1) << 7) | (byte & 0x7f);
+      case 7: {
+        // REF DELTA
+        const ref = buffer.consumeBytes(20).toString('hex');
+        const body = await parseBody(size);
+        yield await onEntry(
+          {kind: StoredEntryKind.ref, ref, body},
+          entryOffset,
+        );
+        break;
+      }
+      default: {
+        const body = await parseBody(size);
+        yield await onEntry(
+          {kind: StoredEntryKind.normal, type, body},
+          entryOffset,
+        );
+        break;
+      }
     }
-    ctx.digest.update(chunk.slice(0, i));
-    return await end(chunk.slice(i));
   }
-  async function end(remaining: Buffer): Promise<State> {
-    return parseBody(
-      remaining,
-      {
-        ...ctx,
-        offset,
-      },
-      async (deltaBody) => {
-        const base = await ctx.offsets.get(ctx.entryOffset - ref);
+
+  const actualChecksum = createHash('sha1')
+    .update(buffer.readConsumed())
+    .digest('hex');
+  const expectedChecksum = buffer.consumeBytes(20).toString('hex');
+  if (actualChecksum !== expectedChecksum) {
+    throw new Error(
+      `Incorrect checksum, expected ${expectedChecksum} but got ${actualChecksum}`,
+    );
+  }
+  if (buffer.getLength()) {
+    throw new Error(`Expected end of stream`);
+  }
+
+  function parseHeader() {
+    let byte = buffer.consumeByte();
+
+    const type = (byte >> 4) & 0x7;
+    let size = byte & 0xf;
+    let leftShift = 4;
+
+    while (byte & 0x80) {
+      byte = buffer.consumeByte();
+      size |= (byte & 0x7f) << leftShift;
+      leftShift += 7;
+    }
+    return {type, size};
+  }
+
+  function parseOffsetDelta() {
+    let byte = buffer.consumeByte();
+
+    let offsetDelta = byte & 0x7f;
+
+    while (byte & 0x80) {
+      byte = buffer.consumeByte();
+      offsetDelta = ((offsetDelta + 1) << 7) | (byte & 0x7f);
+    }
+
+    return offsetDelta;
+  }
+
+  async function parseBody(expectedSize: number) {
+    const {output, bytesWritten} = await inflateUnknownLengthAsync(
+      buffer.readRemaining(),
+    );
+    const compressed = buffer.consumeBytes(bytesWritten);
+    if (output.length !== expectedSize) {
+      throw new Error(`Size mismatch`);
+    }
+    return {compressed, uncompressed: output};
+  }
+
+  async function resolveEntry(
+    entry: StoredEntry,
+  ): Promise<{type: number; body: Buffer}> {
+    switch (entry.kind) {
+      case StoredEntryKind.normal:
+        return {
+          type: entry.type,
+          body: entry.body,
+        };
+      case StoredEntryKind.ref: {
+        const base = await store.getRef(entry.ref);
+        if (!base) {
+          throw new Error(`Cannot find base of ref ${entry.ref}`);
+        }
+        const resolvedBase = await resolveEntry(base);
+        const body = applyDelta(entry.body, resolvedBase.body);
+        return {type: resolvedBase.type, body};
+      }
+      case StoredEntryKind.offset:
+        const base = await store.getOffset(entry.referencedOffset);
         if (!base) {
           throw new Error(
-            `Cannot find base of ofs-delta ${ctx.entryOffset} - ${ref}`,
+            `Cannot find base of offset delta ${entry.referencedOffset}`,
           );
         }
-        const body = applyDelta(deltaBody, base.body);
-        ctx.onEntry({
-          type: base.type,
-          body,
-          offset: ctx.entryOffset,
-        });
-      },
-    );
+        const resolvedBase = await resolveEntry(base);
+        const body = applyDelta(entry.body, resolvedBase.body);
+        return {type: resolvedBase.type, body};
+      default:
+        return assertNever(entry);
+    }
+  }
+  async function onEntry(
+    entryData: EntryData,
+    offset: number,
+  ): Promise<GitRawObject> {
+    const entry = await resolveEntry({
+      ...entryData,
+      body: entryData.body.uncompressed,
+    });
+
+    const type = (GitObjectTypeID[entry.type] ?? `unknown`) as GitObjectType;
+    const body = Buffer.concat([
+      Buffer.from(`${type} ${entry.body.length}\0`, `utf8`),
+      entry.body,
+    ]);
+    const hash = createHash('sha1').update(body).digest('hex');
+
+    store.write(hash, offset, entryData);
+
+    return {
+      hash,
+      type,
+      body,
+    };
   }
 }
 
-// 20 byte raw sha1 hash for ref
-async function refDelta(chunk: Buffer, ctx: BodyContext): Promise<State> {
-  if (chunk.length < 20) {
-    return await waitForMore(
-      chunk,
-      async (chunk) => await refDelta(chunk, ctx),
+function createConsumableBuffer(buffer: Buffer) {
+  let bufferOffset = 0;
+
+  function getLength() {
+    return buffer.length - bufferOffset;
+  }
+  function getOffset() {
+    return bufferOffset;
+  }
+
+  function consumeByte() {
+    return readAndConsume(1, () => buffer[bufferOffset]);
+  }
+
+  function consumeUInt32BE(): number {
+    return readAndConsume(INT32_BYTES, () => buffer.readUInt32BE(bufferOffset));
+  }
+
+  function consumeBytes(bytes: number): Buffer {
+    return readAndConsume(bytes, () =>
+      buffer.slice(bufferOffset, bufferOffset + bytes),
     );
   }
-  const ref = chunk.slice(0, 20).toString('hex');
-  ctx.digest.update(chunk.slice(0, 20));
-  const remaining = chunk.slice(20);
-  return await parseBody(
-    remaining,
-    {
-      ...ctx,
-      offset: ctx.offset + 20,
-    },
-    async (deltaBody) => {
-      const base = await ctx.references.get(ref);
-      if (!base) {
-        throw new Error(
-          `Cannot find base of ref-delta ${ctx.entryOffset}: ${ref}`,
-        );
-      }
-      const body = applyDelta(deltaBody, base.body);
-      ctx.onEntry({
-        type: base.type,
-        body,
-        offset: ctx.entryOffset,
+
+  function readConsumed(): Buffer {
+    return buffer.slice(0, bufferOffset);
+  }
+  function readRemaining(): Buffer {
+    return buffer.slice(bufferOffset);
+  }
+
+  function consume(bytes: number) {
+    readAndConsume(bytes, () => undefined);
+  }
+  function readAndConsume<T>(bytes: number, read: () => T): T {
+    if (bufferOffset + bytes > buffer.length) {
+      throw new Error(
+        `There are not enough bytes in the buffer to consume ${bytes} bytes.`,
+      );
+    }
+    const result = read();
+    bufferOffset += bytes;
+    return result;
+  }
+
+  return {
+    getLength,
+    getOffset,
+    readConsumed,
+    readRemaining,
+    consumeByte,
+    consumeUInt32BE,
+    consumeBytes,
+    consume,
+  };
+}
+
+async function inflateUnknownLengthAsync(buffer: Buffer) {
+  return await new Promise<{output: Buffer; bytesWritten: number}>(
+    (resolve, reject) => {
+      const inflate = createInflate();
+      const output: Buffer[] = [];
+      inflate.on(`data`, (chunk) => output.push(chunk));
+      inflate.on(`error`, reject);
+      inflate.on(`end`, () => {
+        resolve({
+          output: Buffer.concat(output),
+          bytesWritten: inflate.bytesWritten,
+        });
       });
+      inflate.end(buffer);
     },
   );
 }
 
-// Feed the deflated code to the inflate engine
-async function parseBody(
-  chunk: Buffer,
-  ctx: BodyContext,
-  onBody: (body: Buffer, compressedBody: Buffer) => Promise<void>,
-): Promise<State> {
-  let inflateEnded = false;
-  const inflate = createInflate();
-  const inputBuffers: Buffer[] = [];
-  const outputBuffers: Buffer[] = [];
-  const nextParser = new Promise<State>((resolve, reject) => {
-    inflate.on(`data`, (buffer) => {
-      outputBuffers.push(buffer);
-    });
-    inflate.on('error', (err) => {
-      inflateEnded = true;
-      reject(err);
-    });
-    inflate.on('end', () => {
-      inflateEnded = true;
-      const outputBuffer = Buffer.concat(outputBuffers);
-      if (outputBuffer.length !== ctx.size) {
-        throw new Error(
-          `Length mismatch, expected ${ctx.size} got ${outputBuffer.length}`,
-        );
-      }
-      const inputBuffer = Buffer.concat(inputBuffers);
-      ctx.digest.update(inputBuffer.slice(0, inflate.bytesWritten));
-      const remaining = inputBuffer.slice(inflate.bytesWritten);
-
-      onBody(outputBuffer, inputBuffer).then(
-        () => {
-          resolve(
-            parseHeader(remaining, {
-              ...ctx,
-              entryIndex: ctx.entryIndex + 1,
-              offset: ctx.offset + inflate.bytesWritten,
-            }),
-          );
-        },
-        (err) => {
-          reject(err);
-        },
-      );
+async function inflateBufferAsync(buffer: Buffer) {
+  return await new Promise<Buffer>((resolve, reject) => {
+    inflate(buffer, (err, result) => {
+      if (err) reject(err);
+      else resolve(result);
     });
   });
-  return writeChunk(chunk);
-  async function writeChunk(chunk: Buffer | null): Promise<State> {
-    if (!chunk || inflateEnded) {
-      if (!inflateEnded) {
-        inflate.end();
-      }
-      return await (await nextParser)(chunk);
-    }
-    inputBuffers.push(chunk);
-    inflate.write(chunk);
-    return writeChunk;
-  }
 }
 
-// 20 byte checksum
-async function parseChecksum(
-  chunk: Buffer,
-  ctx: HeaderContext,
-): Promise<State> {
-  if (chunk.length < 20) {
-    return waitForMore(chunk, (chunk) => parseChecksum(chunk, ctx));
-  }
-  const actual = ctx.digest.digest('hex');
-  const checksum = chunk.slice(0, 20).toString('hex');
-  if (checksum !== actual) {
-    throw new Error(
-      `Checksum mismatch: actual ${actual} != expected ${checksum}`,
-    );
-  }
-  return done;
-  async function done(_chunk: Buffer | null): Promise<State> {
-    return done;
-  }
-}
-
-function waitForMore(
-  buffer: Buffer,
-  handler: (buffer: Buffer) => Promise<State>,
-): State {
-  return async (chunk: Buffer | null) => {
-    if (!chunk) {
-      throw new Error(`Unexpected end of input stream`);
-    }
-    return await handler(Buffer.concat([buffer, chunk]));
-  };
-}
-
-function encodeRaw(type: string, bytes: Uint8Array) {
-  return concat(encode(`${type} ${bytes.length}\0`), bytes);
+function assertNever(value: never): never {
+  throw new Error(`Unexpected value: ${JSON.stringify(value)}`);
 }

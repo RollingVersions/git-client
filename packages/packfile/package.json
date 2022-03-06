@@ -19,9 +19,7 @@
     "build": "tsc"
   },
   "dependencies": {
-    "@rollingversions/git-core": "^0.0.0",
-    "@types/pako": "^1.0.2",
-    "pako": "^1.0.5"
+    "@rollingversions/git-core": "^0.0.0"
   },
   "devDependencies": {
     "@types/node": "*"

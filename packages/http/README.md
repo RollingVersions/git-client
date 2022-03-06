@@ -51,7 +51,7 @@ After the initial request, all other requests require an object detailing th ser
 
 #### DEFAULT_HTTP_HANDLER
 
-An implementation of `HttpInterface` using `cross-fetch`. You can wrap these if you need to set additional headers (e.g. for auth).
+An implementation of `HttpInterface` using `http-basic`. You can wrap these if you need to set additional headers (e.g. for auth).
 
 ### Methods
 

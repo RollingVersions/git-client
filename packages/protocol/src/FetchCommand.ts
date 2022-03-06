@@ -1,5 +1,9 @@
 import {decode, Type} from '@rollingversions/git-core';
-import {PackfileParserStream} from '@rollingversions/git-packfile';
+import {
+  PackfileParserStream,
+  parsePackfile,
+  PackfileParseOptions,
+} from '@rollingversions/git-packfile';
 import {
   isSpecialPacket,
   PacketLineGenerator,
@@ -8,8 +12,17 @@ import {
 } from './PktLines';
 import ObjectFilter, {objectFiltersToString} from './ObjectFilter';
 import Capabilities, {composeCapabilityList} from './CapabilityList';
-import {PassThrough, Transform} from 'stream';
+import {PassThrough, Readable, Transform, Writable} from 'stream';
 
+export interface FetchCommandOutputOptions extends PackfileParseOptions {
+  /**
+   * Return the raw packfile, rather than parsed objects
+   */
+  raw?: boolean;
+}
+export interface FetchCommandOutputOptionsV2 extends PackfileParseOptions {
+  onProgress?: (progress: string) => void;
+}
 // Sample Request:
 // 0016object-format=sha1
 // 0011command=fetch
@@ -267,78 +280,59 @@ export class FetchResponseMetadataParser extends Transform {
 // 4. errors
 // parse the packfile chunks, then merge everything back together
 // using mergeAsyncIterator
-export function parseFetchResponse(response: NodeJS.ReadableStream) {
+export function parseFetchResponse(
+  response: NodeJS.ReadableStream,
+  {raw = false, ...options}: FetchCommandOutputOptions = {},
+): Readable {
   const output = new PassThrough({objectMode: true});
-  response
+  const rawResponse = response
     .on('error', (err) => output.emit(`error`, err))
     .pipe(new PacketLineParser())
     .on('error', (err) => output.emit(`error`, err))
     .pipe(new FetchResponseMetadataParser())
     .on('error', (err) => output.emit(`error`, err))
-    .on('progress', (progress) => output.emit(`progress`, progress))
-    .pipe(new PackfileParserStream())
-    .on('error', (err) => output.emit(`error`, err))
-    .pipe(output);
+    .on('progress', (progress) => output.emit(`progress`, progress));
+  if (raw) {
+    rawResponse.pipe(output);
+  } else {
+    rawResponse
+      .pipe(new PackfileParserStream(options))
+      .on('error', (err) => output.emit(`error`, err))
+      .pipe(output);
+  }
   return output;
-  // async function* parseResponseLines(): AsyncGenerator<RawFetchResponseEntry> {
-  //   let inPackfile = false;
-  //   for await (const pkt of response) {
-  //     if (isSpecialPacket(pkt)) {
-  //       continue;
-  //     }
-  //     if (inPackfile) {
-  //       const channel = await pkt.peek();
-  //       switch (channel) {
-  //         case 1:
-  //           yield {
-  //             kind: FetchResponseEntryKind.RawPackfileChunk,
-  //             chunks: pkt.stream(),
-  //           };
-  //           break;
-  //         case 2: {
-  //           const text = decode(await pkt.toBuffer(), 1).trim();
-  //           yield {kind: FetchResponseEntryKind.Progress, text};
-  //           break;
-  //         }
-  //         case 3: {
-  //           const text = decode(await pkt.toBuffer(), 1).trim();
-  //           yield {kind: FetchResponseEntryKind.Error, text};
-  //           break;
-  //         }
-  //         default:
-  //           await pkt.stream().complete();
-  //       }
-  //     } else {
-  //       const text = await pkt.toString();
-  //       if (text === 'packfile') {
-  //         inPackfile = true;
-  //       } else {
-  //         yield {kind: FetchResponseEntryKind.Header, text};
-  //       }
-  //     }
-  //   }
-  // }
-  // const [metadata, packetChunks] = splitAsyncIterator(
-  //   parseResponseLines(),
-  //   (c) => (c.kind !== FetchResponseEntryKind.RawPackfileChunk ? c : undefined),
-  //   (c) => (c.kind === FetchResponseEntryKind.RawPackfileChunk ? c : undefined),
-  // );
-  // async function* getRawChunks() {
-  //   for await (const {chunks} of packetChunks) {
-  //     // consume the channel identifier
-  //     chunks.next();
-  //     yield* chunks.rest();
-  //   }
-  // }
-  // async function* unpackRawChunks(): AsyncIterableIterator<FetchResponseEntryObject> {
-  //   for await (const obj of unpack(getRawChunks())) {
-  //     yield {
-  //       kind: FetchResponseEntryKind.Object,
-  //       type: asType(obj.type),
-  //       hash: obj.hash,
-  //       body: obj.body,
-  //     };
-  //   }
-  // }
-  // return mergeAsyncIterator<FetchResponseEntry>(unpackRawChunks(), metadata);
+}
+
+export async function* parseFetchResponseV2(
+  response: NodeJS.ReadableStream,
+  {onProgress, ...options}: FetchCommandOutputOptionsV2 = {},
+) {
+  const responseBuffer = await new Promise<Buffer>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    response
+      .on('error', reject)
+      .pipe(new PacketLineParser())
+      .on('error', reject)
+      .pipe(new FetchResponseMetadataParser())
+      .on('error', reject)
+      .on('progress', (progress) => {
+        if (onProgress) onProgress(progress);
+      })
+      .pipe(
+        new Writable({
+          write(chunk, _encoding, cb) {
+            chunks.push(chunk);
+            cb();
+          },
+          final(cb) {
+            resolve(Buffer.concat(chunks));
+            cb();
+          },
+        }),
+      )
+      .on('error', reject);
+  });
+  for await (const entry of parsePackfile(responseBuffer, options)) {
+    yield entry;
+  }
 }
