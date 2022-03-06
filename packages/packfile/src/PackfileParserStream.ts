@@ -202,7 +202,7 @@ export async function* parsePackfile(
         const delta = parseOffsetDelta();
         const body = await parseBody(size);
         const referencedOffset = entryOffset - delta;
-        yield onEntry(
+        yield await onEntry(
           {kind: StoredEntryKind.offset, referencedOffset, body},
           entryOffset,
         );
@@ -212,12 +212,18 @@ export async function* parsePackfile(
         // REF DELTA
         const ref = buffer.consumeBytes(20).toString('hex');
         const body = await parseBody(size);
-        yield onEntry({kind: StoredEntryKind.ref, ref, body}, entryOffset);
+        yield await onEntry(
+          {kind: StoredEntryKind.ref, ref, body},
+          entryOffset,
+        );
         break;
       }
       default: {
         const body = await parseBody(size);
-        yield onEntry({kind: StoredEntryKind.normal, type, body}, entryOffset);
+        yield await onEntry(
+          {kind: StoredEntryKind.normal, type, body},
+          entryOffset,
+        );
         break;
       }
     }
