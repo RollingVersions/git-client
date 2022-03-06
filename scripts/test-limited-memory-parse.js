@@ -2,7 +2,7 @@ const {spawnSync} = require('child_process');
 const {createHash} = require('crypto');
 const {
   mkdirSync,
-  rmdirSync,
+  rmSync,
   writeFileSync,
   readFileSync,
   readdirSync,
@@ -27,9 +27,7 @@ async function run() {
     throw new Error(`Expected store mode to be raw or compressed`);
   }
 
-  try {
-    rmdirSync(`temp`, {recursive: true, force: true});
-  } catch (ex) {}
+  rmSync(`temp`, {recursive: true, force: true});
   mkdirSync(`temp`, {recursive: true});
 
   const hash = createHash(`sha1`);
