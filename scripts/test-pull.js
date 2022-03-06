@@ -153,10 +153,12 @@ async function pullRepo() {
   );
   const trees = new Map();
   let rootHash = ``;
+  let commitCount = 0;
   await new Promise((resolve, reject) => {
     fetchResponse
       .on(`data`, (entry) => {
         if (gitObj.objectIsCommit(entry.body)) {
+          commitCount++;
           const commit = gitObj.decodeObject(entry.body);
           console.warn(`${chalk.magenta(entry.hash)} ${commit.body.message}`);
           headTreeSha = commit.body.tree;
@@ -215,7 +217,8 @@ async function pullRepo() {
   }
 
   const end = Date.now();
-  console.log(chalk.green(`Pull duration: ${end - start}`));
+  console.log(chalk.green(`Pull duration: ${end - start}ms`));
+  console.log(chalk.green(`Commit count: ${commitCount}`));
 }
 
 pullRepo().catch((ex) => {
