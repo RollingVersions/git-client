@@ -1,5 +1,4 @@
 const {spawnSync} = require('child_process');
-const {createHash} = require('crypto');
 const {
   mkdirSync,
   rmdirSync,
@@ -8,46 +7,50 @@ const {
   readdirSync,
 } = require('fs');
 
-try {
-  rmdirSync(`temp`, {recursive: true, force: true});
-} catch (ex) {}
+// try {
+//   rmdirSync(`temp`, {recursive: true, force: true});
+// } catch (ex) {}
 mkdirSync(`temp`, {recursive: true});
 
-const hash = createHash(`sha1`);
-function writeWithHash(filename, contents) {
+function writeIfChanged(filename, contents) {
+  try {
+    if (readFileSync(filename, `utf8`) === contents) {
+      return;
+    }
+  } catch (ex) {
+    if (ex.code !== 'ENOENT') {
+      throw ex;
+    }
+  }
+  console.info(`Writing ${filename}`);
   writeFileSync(filename, contents);
-  hash.update(contents);
 }
-writeWithHash(`temp/package.json`, readFileSync(`package.json`));
-writeWithHash(`temp/yarn.lock`, readFileSync(`yarn.lock`));
+writeIfChanged(`temp/package.json`, readFileSync(`package.json`, `utf8`));
+writeIfChanged(`temp/yarn.lock`, readFileSync(`yarn.lock`, `utf8`));
 
-for (const pkg of readdirSync(`packages`).sort()) {
+for (const pkg of readdirSync(`packages`)) {
   mkdirSync(`temp/packages/${pkg}`, {recursive: true});
   let pkgSrc;
   try {
-    pkgSrc = readFileSync(`packages/${pkg}/package.json`);
+    pkgSrc = readFileSync(`packages/${pkg}/package.json`, `utf8`);
   } catch (ex) {
     if (ex.code === 'ENOENT') {
       continue;
     }
     throw ex;
   }
-  writeWithHash(`temp/packages/${pkg}/package.json`, pkgSrc);
+  writeIfChanged(`temp/packages/${pkg}/package.json`, pkgSrc);
 }
 
-writeWithHash(
+writeIfChanged(
   `temp/Dockerfile`,
-  Buffer.from(
-    [
-      `FROM node:16-alpine`,
-      `WORKDIR /app`,
-      `ADD . /app`,
-      `RUN yarn install && yarn cache clean`,
-    ].join(`\n`),
-  ),
+  [
+    `FROM node:16-alpine`,
+    `WORKDIR /app`,
+    `ADD . /app`,
+    `RUN yarn install && yarn cache clean`,
+  ].join(`\n`),
 );
-
-const depsId = hash.digest(`hex`);
 
 function run(...args) {
   const proc = spawnSync(...args);
@@ -60,46 +63,10 @@ function run(...args) {
   }
 }
 
-function evaluateSync(...args) {
-  const result = spawnSync(...args);
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    console.error(result.stderr.toString('utf-8'));
-    throw new Error(`${cmd} exited with code ${result.status}`);
-  }
-  return result.stdout.toString('utf8');
-}
-function getLocalImages() {
-  return evaluateSync('docker', ['image', 'ls', '--format', '{{json .}}'])
-    .trim()
-    .split('\n')
-    .filter(Boolean)
-    .map((v) => {
-      try {
-        return JSON.parse(v);
-      } catch (ex) {
-        return null;
-      }
-    })
-    .filter(Boolean)
-    .map((v) => [
-      v.Repository,
-      v.Tag,
-      new Date(`${v.CreatedAt.split(' ')[0]}T${v.CreatedAt.split(' ')[1]}`),
-    ]);
-}
-
-if (
-  !getLocalImages().some(
-    ([name, tag]) => name === `git-client-deps` && tag === depsId,
-  )
-) {
-  run(`docker`, [`build`, `-t`, `git-client-deps:${depsId}`, `.`], {
-    cwd: `temp`,
-    stdio: `inherit`,
-  });
-}
-run(`docker`, [`tag`, `git-client-deps:${depsId}`, `git-client-deps:latest`]);
+run(`docker`, [`build`, `-t`, `git-client-deps`, `.`], {
+  cwd: `temp`,
+  stdio: `inherit`,
+});
 
 run(`docker`, [`build`, `-t`, `git-client`, `.`], {
   stdio: `inherit`,
@@ -111,10 +78,10 @@ run(
     `run`,
     `--rm`,
     ...(process.env.CI ? [] : [`-it`]),
-    // `--memory`,
-    // `300mb`,
-    // `--memory-swap`,
-    // `300mb`,
+    `--memory`,
+    `256mb`,
+    `--memory-swap`,
+    `256mb`,
     `--name`,
     `git-client`,
     `git-client`,
