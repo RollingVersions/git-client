@@ -3,7 +3,7 @@ import {createHash} from 'crypto';
 import {Duplex} from 'stream';
 import {createInflate} from 'zlib';
 import applyDelta from './apply-delta';
-import {GitObjectTypeID} from './types';
+import {GitObjectType, GitObjectTypeID, GitRawObject} from './types';
 
 const INT32_BYTES = 4;
 
@@ -66,12 +66,12 @@ export default class PackfileParserStream extends Duplex {
           const input = Buffer.concat(buffer);
           for await (const entry of parsePackfile(input, stores)) {
             if (!this.push(entry)) {
-              process.stdout.write(`🛑`);
+              // process.stdout.write(`🛑`);
 
               await new Promise<void>((resolve) => (onRead = resolve));
               onRead = noop;
 
-              process.stdout.write(`✅`);
+              // process.stdout.write(`✅`);
             }
           }
           this.push(null);
@@ -89,7 +89,7 @@ export default class PackfileParserStream extends Duplex {
 export async function* parsePackfile(
   data: Buffer,
   {references = new Map(), offsets = new Map()}: Stores = {},
-) {
+): AsyncGenerator<GitRawObject, void, unknown> {
   const buffer = createConsumableBuffer(data);
 
   // The first four bytes in a packfile are the bytes 'PACK'
@@ -246,8 +246,8 @@ export async function* parsePackfile(
     entry: {type: number; body: Buffer},
     storedEntry: StoredEntry<'compressed'>,
     offset: number,
-  ) {
-    const type = GitObjectTypeID[entry.type] ?? `unknown`;
+  ): GitRawObject {
+    const type = (GitObjectTypeID[entry.type] ?? `unknown`) as GitObjectType;
     const body = encodeRaw(type, entry.body);
     const hash = createHash('sha1').update(body).digest('hex');
 

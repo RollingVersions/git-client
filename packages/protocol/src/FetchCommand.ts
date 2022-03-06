@@ -1,5 +1,9 @@
 import {decode, Type} from '@rollingversions/git-core';
-import {PackfileParserStream, Stores} from '@rollingversions/git-packfile';
+import {
+  PackfileParserStream,
+  parsePackfile,
+  Stores,
+} from '@rollingversions/git-packfile';
 import {
   isSpecialPacket,
   PacketLineGenerator,
@@ -8,13 +12,16 @@ import {
 } from './PktLines';
 import ObjectFilter, {objectFiltersToString} from './ObjectFilter';
 import Capabilities, {composeCapabilityList} from './CapabilityList';
-import {PassThrough, Readable, Transform} from 'stream';
+import {PassThrough, Readable, Transform, Writable} from 'stream';
 
 export interface FetchCommandOutputOptions extends Stores {
   /**
    * Return the raw packfile, rather than parsed objects
    */
   raw?: boolean;
+}
+export interface FetchCommandOutputOptionsV2 extends Stores {
+  onProgress?: (progress: string) => void;
 }
 // Sample Request:
 // 0016object-format=sha1
@@ -294,4 +301,38 @@ export function parseFetchResponse(
       .pipe(output);
   }
   return output;
+}
+
+export async function* parseFetchResponseV2(
+  response: NodeJS.ReadableStream,
+  {onProgress, ...stores}: FetchCommandOutputOptionsV2 = {},
+) {
+  const responseBuffer = await new Promise<Buffer>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    response
+      .on('error', reject)
+      .pipe(new PacketLineParser())
+      .on('error', reject)
+      .pipe(new FetchResponseMetadataParser())
+      .on('error', reject)
+      .on('progress', (progress) => {
+        if (onProgress) onProgress(progress);
+      })
+      .pipe(
+        new Writable({
+          write(chunk, _encoding, cb) {
+            chunks.push(chunk);
+            cb();
+          },
+          final(cb) {
+            resolve(Buffer.concat(chunks));
+            cb();
+          },
+        }),
+      )
+      .on('error', reject);
+  });
+  for await (const entry of parsePackfile(responseBuffer, stores)) {
+    yield entry;
+  }
 }

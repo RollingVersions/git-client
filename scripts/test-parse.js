@@ -1,8 +1,20 @@
 const fs = require('fs');
-const {PackfileParserStreamV2} = require('../packages/packfile');
+const {PackfileParserStream} = require('../packages/packfile');
 const gitObj = require('../packages/objects');
 const {Transform} = require('stream');
 
+function startCheckingLiveness() {
+  let lastPing = Date.now();
+  const pinger = setInterval(() => {
+    const now = Date.now();
+    const delay = now - lastPing - 30;
+    lastPing = now;
+    if (delay > 30) {
+      process.stdout.write(`🚨${delay}`);
+    }
+  }, 30);
+  return () => clearInterval(pinger);
+}
 const START = Date.now();
 async function parse() {
   const filename = process.argv[2] ?? (await ask.input(`filename`));
@@ -11,9 +23,11 @@ async function parse() {
   let j = 0;
   let line = 0;
   console.info(`each . is 1000 entries, each line is 10,000 entries`);
-  const entries = new PackfileParserStreamV2(fs.readFileSync(filename));
+  const stopCheckingLiveness = startCheckingLiveness();
   await new Promise((resolve, reject) => {
-    entries
+    fs.createReadStream(filename)
+      .on(`error`, reject)
+      .pipe(new PackfileParserStream())
       .on('error', reject)
       .pipe(
         new Transform({
@@ -38,8 +52,10 @@ async function parse() {
               }
             }
 
+            // setTimeout(() => {
             gitObj.decodeObject(entry.body);
             cb(null, Buffer.concat([Buffer.from(entry.type), entry.body]));
+            // }, 10);
           },
         }),
       )
@@ -48,6 +64,8 @@ async function parse() {
       .on('error', reject)
       .on('close', resolve);
   });
+
+  stopCheckingLiveness();
 
   process.stdout.write(`\n\n`);
   console.warn(`Parsed ${count} entries`);

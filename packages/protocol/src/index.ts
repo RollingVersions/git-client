@@ -4,6 +4,8 @@ import FetchCommand, {
   parseFetchResponse,
   FetchResponseEntryObject,
   FetchCommandOutputOptions,
+  parseFetchResponseV2,
+  FetchCommandOutputOptionsV2,
 } from './FetchCommand';
 import {parseInitialResponse} from './InitialRequest';
 import LsRefsCommand, {
@@ -20,11 +22,16 @@ import ObjectFilter, {
 
 export type {Capabilities};
 export type {LsRefsCommand, LsRefsResponseEntry};
-export type {FetchCommand, FetchResponseEntryObject, FetchCommandOutputOptions};
+export type {
+  FetchCommand,
+  FetchResponseEntryObject,
+  FetchCommandOutputOptions,
+  FetchCommandOutputOptionsV2,
+};
 
 export {parseInitialResponse};
 export {composeLsRefsCommand, parseLsRefsResponse};
-export {composeFetchCommand, parseFetchResponse};
+export {composeFetchCommand, parseFetchResponse, parseFetchResponseV2};
 
 export type {ObjectFilter};
 export {blobNone, blobLimit, sparse, treeDepth};
