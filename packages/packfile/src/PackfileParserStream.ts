@@ -1,5 +1,6 @@
 import {createHash} from 'crypto';
 import {Duplex} from 'stream';
+import {Worker, isMainThread, parentPort, workerData} from 'worker_threads';
 import {createInflate, inflate} from 'zlib';
 import applyDelta from './apply-delta';
 import {GitObjectType, GitObjectTypeID, GitRawObject} from './types';
@@ -16,6 +17,27 @@ export enum StoredEntryKind {
   ref = 2,
   offset = 3,
 }
+type WorkerInputBuffer = {
+  readonly start: number;
+  readonly end: number;
+  readonly uncompressed: Buffer;
+};
+export type WorkerInput =
+  | {
+      readonly kind: StoredEntryKind.normal;
+      readonly type: number;
+      readonly body: WorkerInputBuffer;
+    }
+  | {
+      readonly kind: StoredEntryKind.ref;
+      readonly ref: string;
+      readonly body: WorkerInputBuffer;
+    }
+  | {
+      readonly kind: StoredEntryKind.offset;
+      readonly referencedOffset: number;
+      readonly body: WorkerInputBuffer;
+    };
 export type StoredEntry<TMode extends 'compressed' | 'raw'> =
   | {
       readonly kind: StoredEntryKind.normal;
@@ -87,8 +109,12 @@ export default class PackfileParserStream extends Duplex {
 
 export async function* parsePackfile(
   data: Buffer,
-  {references = new Map(), offsets = new Map()}: Stores = {},
+  _stores: Stores = {},
 ): AsyncGenerator<GitRawObject, void, unknown> {
+  const worker = new Worker(__filename, {
+    workerData: data,
+  });
+
   const buffer = createConsumableBuffer(data);
 
   // The first four bytes in a packfile are the bytes 'PACK'
@@ -109,6 +135,7 @@ export async function* parsePackfile(
   // The number of objects in this packfile is also stored as an unsigned 32 bit int.
   const entriesCount = buffer.consumeUInt32BE();
 
+  let nextEntry;
   for (let entryIndex = 0; entryIndex < entriesCount; entryIndex++) {
     const entryOffset = buffer.getOffset();
     const {type, size} = parseHeader();
@@ -116,41 +143,43 @@ export async function* parsePackfile(
       case 6: {
         // OFFSET DELTA
         const delta = parseOffsetDelta();
-        const {output: rawBody, compressed} = await parseBody(size);
+        const body = await parseBody(size);
+        if (nextEntry) {
+          yield await nextEntry;
+        }
         const referencedOffset = entryOffset - delta;
-        yield onEntry(
-          await resolveEntry({
-            kind: StoredEntryKind.offset,
-            referencedOffset,
-            body: rawBody,
-          }),
-          {kind: StoredEntryKind.offset, referencedOffset, body: compressed},
-          entryOffset,
-        );
+        nextEntry = onEntry({
+          kind: StoredEntryKind.offset,
+          referencedOffset,
+          body,
+        });
         break;
       }
       case 7: {
         // REF DELTA
         const ref = buffer.consumeBytes(20).toString('hex');
-        const {output: rawBody, compressed} = await parseBody(size);
-        yield onEntry(
-          await resolveEntry({kind: StoredEntryKind.ref, ref, body: rawBody}),
-          {kind: StoredEntryKind.ref, ref, body: compressed},
-          entryOffset,
-        );
+        const body = await parseBody(size);
+        if (nextEntry) {
+          yield await nextEntry;
+        }
+        nextEntry = onEntry({kind: StoredEntryKind.ref, ref, body});
         break;
       }
       default: {
-        const {output: rawBody, compressed} = await parseBody(size);
-        yield onEntry(
-          {type, body: rawBody},
-          {kind: StoredEntryKind.normal, type, body: compressed},
-          entryOffset,
-        );
+        const body = await parseBody(size);
+        if (nextEntry) {
+          yield await nextEntry;
+        }
+        nextEntry = onEntry({kind: StoredEntryKind.normal, type, body});
         break;
       }
     }
   }
+  if (nextEntry) {
+    yield await nextEntry;
+  }
+
+  worker.terminate();
 
   const actualChecksum = createHash('sha1')
     .update(buffer.readConsumed())
@@ -194,67 +223,35 @@ export async function* parsePackfile(
   }
 
   async function parseBody(expectedSize: number) {
+    const start = buffer.getOffset();
     const {output, bytesWritten} = await inflateUnknownLengthAsync(
       buffer.readRemaining(),
     );
-    const compressed = buffer.consumeBytes(bytesWritten);
+    buffer.consume(bytesWritten);
+    // const compressed = buffer.consumeBytes(bytesWritten);
     if (output.length !== expectedSize) {
       throw new Error(`Size mismatch`);
     }
-    return {compressed, output};
+    return {start, end: buffer.getOffset(), uncompressed: output};
   }
 
-  async function resolveCompressedEntry(entry: StoredEntry<'compressed'>) {
-    return await resolveEntry({
-      ...entry,
-      body: await inflateBufferAsync(entry.body),
-      __mode: 'raw',
-    });
-  }
-  async function resolveEntry(
-    entry: StoredEntry<'raw'>,
-  ): Promise<{type: number; body: Buffer}> {
-    switch (entry.kind) {
-      case StoredEntryKind.normal:
-        return {
-          type: entry.type,
-          body: entry.body,
-        };
-      case StoredEntryKind.ref: {
-        const base = await references.get(entry.ref);
-        if (!base) {
-          throw new Error(`Cannot find base of ref ${entry.ref}`);
-        }
-        const resolvedBase = await resolveCompressedEntry(base);
-        const body = applyDelta(entry.body, resolvedBase.body);
-        return {type: resolvedBase.type, body};
-      }
-      case StoredEntryKind.offset:
-        const base = await offsets.get(entry.referencedOffset);
-        if (!base) {
-          throw new Error(
-            `Cannot find base of offset delta ${entry.referencedOffset}`,
-          );
-        }
-        const resolvedBase = await resolveCompressedEntry(base);
-        const body = applyDelta(entry.body, resolvedBase.body);
-        return {type: resolvedBase.type, body};
-    }
-  }
-  function onEntry(
-    entry: {type: number; body: Buffer},
-    storedEntry: StoredEntry<'compressed'>,
-    offset: number,
-  ): GitRawObject {
-    const type = (GitObjectTypeID[entry.type] ?? `unknown`) as GitObjectType;
-    const body = Buffer.concat([
-      Buffer.from(`${type} ${entry.body.length}\0`, `utf8`),
-      entry.body,
-    ]);
-    const hash = createHash('sha1').update(body).digest('hex');
-
-    references.set(hash, storedEntry);
-    offsets.set(offset, storedEntry);
+  async function onEntry(input: WorkerInput): Promise<GitRawObject> {
+    const {hash, type, body} = await new Promise<GitRawObject>(
+      (resolve, reject) => {
+        worker.once(`message`, (result: any) => {
+          worker.off(`error`, reject);
+          resolve(result);
+        });
+        worker.once(`error`, reject);
+        worker.postMessage(input, [input.body.uncompressed.buffer]);
+      },
+    );
+    // const type = (GitObjectTypeID[entry.type] ?? `unknown`) as GitObjectType;
+    // const body = Buffer.concat([
+    //   Buffer.from(`${type} ${entry.body.length}\0`, `utf8`),
+    //   entry.body,
+    // ]);
+    // const hash = createHash('sha1').update(body).digest('hex');
 
     return {
       hash,
@@ -346,4 +343,75 @@ async function inflateBufferAsync(buffer: Buffer) {
       else resolve(result);
     });
   });
+}
+
+if (!isMainThread) {
+  startWorker();
+}
+
+function startWorker({
+  references = new Map(),
+  offsets = new Map(),
+}: Stores = {}) {
+  const buffer = workerData;
+
+  parentPort?.on('message', async (input: WorkerInput) => {
+    const compressedBuffer = buffer.slice(input.body.start, input.body.end);
+    const entry = await resolveEntry({
+      ...input,
+      body: input.body.uncompressed,
+    });
+    const type = (GitObjectTypeID[entry.type] ?? `unknown`) as GitObjectType;
+    const body = Buffer.concat([
+      Buffer.from(`${type} ${entry.body.length}\0`, `utf8`),
+      entry.body,
+    ]);
+    const hash = createHash('sha1').update(body).digest('hex');
+
+    const storedEntry = {
+      ...input,
+      body: compressedBuffer,
+    };
+    references.set(hash, storedEntry);
+    offsets.set(input.body.start, storedEntry);
+
+    parentPort?.postMessage({type, body, hash}, [body.buffer]);
+  });
+  async function resolveCompressedEntry(entry: StoredEntry<'compressed'>) {
+    return await resolveEntry({
+      ...entry,
+      body: await inflateBufferAsync(entry.body),
+      __mode: 'raw',
+    });
+  }
+  async function resolveEntry(
+    entry: StoredEntry<'raw'>,
+  ): Promise<{type: number; body: Buffer}> {
+    switch (entry.kind) {
+      case StoredEntryKind.normal:
+        return {
+          type: entry.type,
+          body: entry.body,
+        };
+      case StoredEntryKind.ref: {
+        const base = await references.get(entry.ref);
+        if (!base) {
+          throw new Error(`Cannot find base of ref ${entry.ref}`);
+        }
+        const resolvedBase = await resolveCompressedEntry(base);
+        const body = applyDelta(entry.body, resolvedBase.body);
+        return {type: resolvedBase.type, body};
+      }
+      case StoredEntryKind.offset:
+        const base = await offsets.get(entry.referencedOffset);
+        if (!base) {
+          throw new Error(
+            `Cannot find base of offset delta ${entry.referencedOffset}`,
+          );
+        }
+        const resolvedBase = await resolveCompressedEntry(base);
+        const body = applyDelta(entry.body, resolvedBase.body);
+        return {type: resolvedBase.type, body};
+    }
+  }
 }
