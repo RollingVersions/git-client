@@ -74,6 +74,7 @@ export default class PackfileParserStream extends Duplex {
               process.stdout.write(`✅`);
             }
           }
+          this.push(null);
         })().then(
           () => cb(),
           (ex) => {
