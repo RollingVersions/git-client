@@ -1,7 +1,7 @@
 import {concat, encode} from '@rollingversions/git-core';
 import {createHash} from 'crypto';
 import {Duplex} from 'stream';
-import {createInflate} from 'zlib';
+import {createInflate, inflate} from 'zlib';
 import applyDelta from './apply-delta';
 import {GitObjectType, GitObjectTypeID, GitRawObject} from './types';
 
@@ -195,7 +195,9 @@ export async function* parsePackfile(
   }
 
   async function parseBody(expectedSize: number) {
-    const {output, bytesWritten} = await inflateAsync(buffer.readRemaining());
+    const {output, bytesWritten} = await inflateUnknownLengthAsync(
+      buffer.readRemaining(),
+    );
     const compressed = buffer.consumeBytes(bytesWritten);
     if (output.length !== expectedSize) {
       throw new Error(`Size mismatch`);
@@ -204,17 +206,15 @@ export async function* parsePackfile(
   }
 
   async function resolveCompressedEntry(entry: StoredEntry<'compressed'>) {
-    // console.log(`resolveCompressedEntry ${StoredEntryKind[entry.kind]}`);
     return await resolveEntry({
       ...entry,
-      body: (await inflateAsync(entry.body)).output,
+      body: await inflateBufferAsync(entry.body),
       __mode: 'raw',
     });
   }
   async function resolveEntry(
     entry: StoredEntry<'raw'>,
   ): Promise<{type: number; body: Buffer}> {
-    // console.log(`resolveEntry ${StoredEntryKind[entry.kind]}`);
     switch (entry.kind) {
       case StoredEntryKind.normal:
         return {
@@ -272,9 +272,6 @@ function createConsumableBuffer(buffer: Buffer) {
   function getLength() {
     return buffer.length - bufferOffset;
   }
-  function getOffset() {
-    return bufferOffset;
-  }
 
   function consumeByte() {
     return readAndConsume(1, () => buffer[bufferOffset]);
@@ -313,7 +310,6 @@ function createConsumableBuffer(buffer: Buffer) {
 
   return {
     getLength,
-    getOffset,
     readConsumed,
     readRemaining,
     consumeByte,
@@ -323,8 +319,8 @@ function createConsumableBuffer(buffer: Buffer) {
   };
 }
 
-function inflateAsync(buffer: Buffer) {
-  return new Promise<{output: Buffer; bytesWritten: number}>(
+async function inflateUnknownLengthAsync(buffer: Buffer) {
+  return await new Promise<{output: Buffer; bytesWritten: number}>(
     (resolve, reject) => {
       const inflate = createInflate();
       const output: Buffer[] = [];
@@ -339,4 +335,13 @@ function inflateAsync(buffer: Buffer) {
       inflate.end(buffer);
     },
   );
+}
+
+async function inflateBufferAsync(buffer: Buffer) {
+  return await new Promise<Buffer>((resolve, reject) => {
+    inflate(buffer, (err, result) => {
+      if (err) reject(err);
+      else resolve(result);
+    });
+  });
 }

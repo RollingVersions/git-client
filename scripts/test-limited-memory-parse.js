@@ -7,29 +7,42 @@ const {
   readdirSync,
 } = require('fs');
 
-try {
-  rmdirSync(`temp`, {recursive: true, force: true});
-} catch (ex) {}
+// try {
+//   rmdirSync(`temp`, {recursive: true, force: true});
+// } catch (ex) {}
 mkdirSync(`temp`, {recursive: true});
 
-writeFileSync(`temp/package.json`, readFileSync(`package.json`));
-writeFileSync(`temp/yarn.lock`, readFileSync(`yarn.lock`));
+function writeIfChanged(filename, contents) {
+  try {
+    if (readFileSync(filename, `utf8`) === contents) {
+      return;
+    }
+  } catch (ex) {
+    if (ex.code !== 'ENOENT') {
+      throw ex;
+    }
+  }
+  console.info(`Writing ${filename}`);
+  writeFileSync(filename, contents);
+}
+writeIfChanged(`temp/package.json`, readFileSync(`package.json`, `utf8`));
+writeIfChanged(`temp/yarn.lock`, readFileSync(`yarn.lock`, `utf8`));
 
 for (const pkg of readdirSync(`packages`)) {
   mkdirSync(`temp/packages/${pkg}`, {recursive: true});
   let pkgSrc;
   try {
-    pkgSrc = readFileSync(`packages/${pkg}/package.json`);
+    pkgSrc = readFileSync(`packages/${pkg}/package.json`, `utf8`);
   } catch (ex) {
     if (ex.code === 'ENOENT') {
       continue;
     }
     throw ex;
   }
-  writeFileSync(`temp/packages/${pkg}/package.json`, pkgSrc);
+  writeIfChanged(`temp/packages/${pkg}/package.json`, pkgSrc);
 }
 
-writeFileSync(
+writeIfChanged(
   `temp/Dockerfile`,
   [
     `FROM node:16-alpine`,
