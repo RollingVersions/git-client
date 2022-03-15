@@ -180,7 +180,7 @@ function decodeTag(body: Uint8Array): TagObject {
 }
 
 function decodePerson(string: string) {
-  const match = string.match(/^([^<]*) <([^>]*)> ([^ ]*) (.*)$/);
+  const match = string.match(/^([^<]*) ?<([^>]*)> ([^ ]*) (.*)$/);
   if (!match) throw new Error('Improperly formatted person string');
   return {
     name: match[1],
