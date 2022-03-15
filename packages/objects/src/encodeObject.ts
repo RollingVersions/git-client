@@ -86,7 +86,8 @@ export function encodeCommit(body: CommitBody) {
 function formatPerson(person: Person) {
   return (
     safe(person.name) +
-    ' <' +
+    (safe(person.name) ? ' ' : '') +
+    '<' +
     safe(person.email) +
     '> ' +
     formatDate(person.date)
