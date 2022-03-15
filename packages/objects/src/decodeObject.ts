@@ -179,15 +179,15 @@ function decodeTag(body: Uint8Array): TagObject {
   };
 }
 
-function decodePerson(string: string) {
-  const match = string.match(/^([^<]*) <([^>]*)> ([^ ]*) (.*)$/);
+function decodePerson(string: string): Person {
+  const match = string.match(/^(?:([^<]*) )?<([^>]*)> ([^ ]*) (.*)$/);
   if (!match) throw new Error('Improperly formatted person string');
   return {
-    name: match[1],
-    email: match[2],
+    name: match[1] ?? ``,
+    email: match[2] ?? ``,
     date: {
       seconds: parseInt(match[3], 10),
       offset: (parseInt(match[4], 10) / 100) * -60,
     },
-  } as Person;
+  };
 }

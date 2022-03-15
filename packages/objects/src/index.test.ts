@@ -70,6 +70,37 @@ test(
 );
 
 test(
+  'save and load commit with empty person name',
+  testEncoding(
+    {
+      type: Type.commit,
+      body: {
+        tree: 'df2b8fc99e1c1d4dbc0a854d9f72157f1d6ea078',
+        parents: [],
+        author: {
+          name: '',
+          email: 'me@mariusgundersen.net',
+          date: {
+            seconds: 1500840368,
+            offset: -2 * 60,
+          },
+        },
+        committer: {
+          name: 'Marius Gundersen',
+          email: 'me@mariusgundersen.net',
+          date: {
+            seconds: 1500840368,
+            offset: -2 * 60,
+          },
+        },
+        message: 'test\n',
+      },
+    },
+    '92f15c00a43ca7bd64a94bcbee32a400f783351a',
+  ),
+);
+
+test(
   'save and load tag',
   testEncoding(
     {
